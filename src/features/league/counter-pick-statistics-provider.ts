@@ -66,6 +66,7 @@ type CounterPickStatsResult = {
 type CounterRankingV2PublicReviewRow = {
   counter_champion_id: string;
   enemy_champion_id: string;
+  high_mastery_required: boolean | null;
   public_eligible: boolean;
   review_status: string;
 };
@@ -98,6 +99,7 @@ const mockLastUpdatedAt = "2026-06-14T00:00:00.000Z";
 const counterRankingV2PublicReviewSelect = [
   "counter_champion_id",
   "enemy_champion_id",
+  "high_mastery_required",
   "public_eligible",
   "review_status",
 ].join(", ");
@@ -390,6 +392,7 @@ async function fetchPublicEligibleCounterRankingV2Reviews({
       counterChampionId: row.counter_champion_id,
       direction: "selected_good_into",
       enemyChampionId: row.enemy_champion_id,
+      highMasteryRequired: Boolean(row.high_mastery_required),
       publicEligible: row.public_eligible,
       reviewStatus: row.review_status,
     })),
@@ -399,6 +402,7 @@ async function fetchPublicEligibleCounterRankingV2Reviews({
       counterChampionId: row.counter_champion_id,
       direction: "counter_into_selected",
       enemyChampionId: row.enemy_champion_id,
+      highMasteryRequired: Boolean(row.high_mastery_required),
       publicEligible: row.public_eligible,
       reviewStatus: row.review_status,
     })),

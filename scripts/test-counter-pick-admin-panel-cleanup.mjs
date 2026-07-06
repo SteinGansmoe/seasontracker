@@ -169,8 +169,8 @@ function testCounterRankingV2ShadowProfileSelection() {
   assert.equal(counterPickSectionSource.includes("Promote to Reviewed"), true);
   assert.match(
     counterPickSectionSource,
-    /if \(view === "profile-review"\)[\s\S]*<CounterRankingV2ProfileReviewPanel[\s\S]*<\/div>\s*\);\s*}\s*if \(view === "shadow-ranking"\)/,
-    "Counter profile review should render on its own page before the shadow-ranking view.",
+    /if \(view === "profile-review"\)[\s\S]*<CounterRankingV2ProfileReviewPanel[\s\S]*if \(view === "review"\)[\s\S]*<CounterRankingV2AdminReviewPanel[\s\S]*if \(view === "shadow-ranking"\)/,
+    "Counter profile review and Counter Review should render on their own pages before the shadow-ranking view.",
   );
   assert.equal(counterPickSectionSource.includes("No observed stats are available"), true);
   assert.equal(counterPickSectionSource.includes("No review rows have been saved"), true);

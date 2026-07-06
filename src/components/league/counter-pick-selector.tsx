@@ -2164,6 +2164,8 @@ function getCounterPickPublicLabelItems(labels: PublicCounterResultLabel[]) {
         return { text: "Counter", tone: "emerald", value: label } as const;
       case "hard_countered":
         return { text: "Hard Countered", tone: "danger", value: label } as const;
+      case "high_mastery":
+        return { text: "High Mastery", tone: "amber", value: label } as const;
       case "low_sample":
         return { text: "Low sample", tone: "amber", value: label } as const;
       case "mechanically_countered":

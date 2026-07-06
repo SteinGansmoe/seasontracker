@@ -18,6 +18,7 @@ export type CounterPickStatisticsSource =
 export type PublicCounterResultLabel =
   | "design_counter"
   | "hard_countered"
+  | "high_mastery"
   | "low_sample"
   | "mechanically_countered"
   | "strong_stats_design_counter"
@@ -59,6 +60,7 @@ export type PublicReviewedMechanicalCounter = {
   counterChampionId: string;
   direction?: "counter_into_selected" | "selected_good_into";
   enemyChampionId: string;
+  highMasteryRequired?: boolean;
   publicEligible: boolean;
   reviewStatus: "verified_soft_counter" | "verified_strong_counter" | string;
 };
@@ -290,6 +292,7 @@ export function getPublicCounterResultsForSelectedChampionStats(
       if (existingCounter) {
         existingCounter.statistics.publicLabels = getPublicReviewedMechanicalCounterLabels({
           direction: reviewedCounterDirection,
+          highMasteryRequired: reviewedCounter.highMasteryRequired,
           reviewStatus: reviewedCounter.reviewStatus,
           statistics: existingCounter.statistics,
         });
@@ -300,10 +303,12 @@ export function getPublicCounterResultsForSelectedChampionStats(
       const designCounterResult = observedResult
         ? clonePublicCounterResultWithLabels(observedResult, {
             direction: reviewedCounterDirection,
+            highMasteryRequired: reviewedCounter.highMasteryRequired,
             reviewStatus: reviewedCounter.reviewStatus,
           })
         : createDesignCounterPublicResult({
             direction: reviewedCounterDirection,
+            highMasteryRequired: reviewedCounter.highMasteryRequired,
             listedChampionId,
             reviewStatus: reviewedCounter.reviewStatus,
             selectedChampionId,
@@ -413,9 +418,11 @@ function clonePublicCounterResultWithLabels(
   result: PublicCounterResult,
   {
     direction,
+    highMasteryRequired,
     reviewStatus,
   }: {
     direction: "counter_into_selected" | "selected_good_into";
+    highMasteryRequired?: boolean;
     reviewStatus: PublicReviewedMechanicalCounter["reviewStatus"];
   },
 ): PublicCounterResult {
@@ -427,6 +434,7 @@ function clonePublicCounterResultWithLabels(
         result.statistics.winRate ?? (result.games > 0 ? result.listedChampionWinRate : null),
       publicLabels: getPublicReviewedMechanicalCounterLabels({
         direction,
+        highMasteryRequired,
         reviewStatus,
         statistics: result.statistics,
       }),
@@ -436,11 +444,13 @@ function clonePublicCounterResultWithLabels(
 
 function createDesignCounterPublicResult({
   direction,
+  highMasteryRequired,
   listedChampionId,
   reviewStatus,
   selectedChampionId,
 }: {
   direction: "counter_into_selected" | "selected_good_into";
+  highMasteryRequired?: boolean;
   listedChampionId: string;
   reviewStatus: PublicReviewedMechanicalCounter["reviewStatus"];
   selectedChampionId: string;
@@ -452,6 +462,7 @@ function createDesignCounterPublicResult({
     games: 0,
     publicLabels: getPublicReviewedMechanicalCounterLabels({
       direction,
+      highMasteryRequired,
       reviewStatus,
       statistics: {
         ...emptyCounterPickStatistics,
@@ -477,10 +488,12 @@ function createDesignCounterPublicResult({
 
 function getPublicReviewedMechanicalCounterLabels({
   direction,
+  highMasteryRequired,
   reviewStatus,
   statistics,
 }: {
   direction: "counter_into_selected" | "selected_good_into";
+  highMasteryRequired?: boolean;
   reviewStatus: PublicReviewedMechanicalCounter["reviewStatus"];
   statistics: Pick<CounterPickStatistics, "confidence" | "publicLabels">;
 }): PublicCounterResultLabel[] {
@@ -490,6 +503,7 @@ function getPublicReviewedMechanicalCounterLabels({
   labels.delete("strong_stats_design_counter");
   labels.delete("verified_counter");
   labels.delete("hard_countered");
+  labels.delete("high_mastery");
   labels.delete("mechanically_countered");
 
   if (direction === "selected_good_into") {
@@ -508,6 +522,10 @@ function getPublicReviewedMechanicalCounterLabels({
 
   if (!statistics.confidence.publiclyRanked) {
     labels.add("low_sample");
+  }
+
+  if (highMasteryRequired) {
+    labels.add("high_mastery");
   }
 
   return Array.from(labels);

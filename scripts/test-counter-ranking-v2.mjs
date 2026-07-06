@@ -1151,6 +1151,11 @@ assert.equal(
   "Review saves should accept not_a_counter as a valid mechanical review status.",
 );
 assert.equal(
+  isCounterRankingV2ReviewStatus("high_mastery_required"),
+  false,
+  "High mastery should be a modifier flag, not a mechanical review status.",
+);
+assert.equal(
   calculateCounterRankingV2FinalMechanicalScore({
     calculatedMechanicalScore: 78,
     manualAdjustment: 10,
@@ -1798,6 +1803,7 @@ const reviewFilterRows = getCounterRankingV2ComparisonRows({
         calculatedMechanicalScore: 60,
         counterChampionId: "malzahar",
         enemyChampionId: "yone",
+        highMasteryRequired: true,
         reviewStatus: "needs_more_data",
         role: "mid",
       }),
@@ -1873,6 +1879,15 @@ assert.deepEqual(
   }).map((row) => row.candidateChampionId),
   ["malzahar"],
   "The needs-more-data filter should only include those review rows.",
+);
+assert.deepEqual(
+  filterCounterRankingV2RowsByReviewFilter({
+    filter: "high_mastery_required",
+    minimumGames: 5,
+    rows: reviewFilterRows,
+  }).map((row) => row.candidateChampionId),
+  ["malzahar"],
+  "The high-mastery filter should match the modifier flag instead of review status.",
 );
 assert.deepEqual(
   filterCounterRankingV2RowsByReviewFilter({
@@ -1956,6 +1971,7 @@ assert.deepEqual(
 assert.deepEqual(
   getCounterRankingV2ReviewProgressSummary(reviewFilterRows),
   {
+    highMasteryRequired: 1,
     incorrectSuggestions: 1,
     needsMoreData: 1,
     notCounters: 1,
@@ -2087,17 +2103,27 @@ const incorrectSuggestionReview = createCounterRankingV2MechanicalReview({
   reviewStatus: "incorrect_suggestion",
   role: "mid",
 });
-const highMasteryReview = {
+const highMasteryNeedsMoreDataReview = {
   ...createCounterRankingV2MechanicalReview({
     calculatedMechanicalScore: 90,
     counterChampionId: "yasuo",
     enemyChampionId: "yone",
+    highMasteryRequired: true,
     publicEligible: true,
-    reviewStatus: "high_mastery_required",
+    reviewStatus: "needs_more_data",
     role: "mid",
   }),
   publicEligible: true,
 };
+const highMasteryStrongReview = createCounterRankingV2MechanicalReview({
+  calculatedMechanicalScore: 90,
+  counterChampionId: "vex",
+  enemyChampionId: "yone",
+  highMasteryRequired: true,
+  publicEligible: true,
+  reviewStatus: "verified_strong_counter",
+  role: "mid",
+});
 
 assert.equal(
   isCounterRankingV2ReviewPublicEligible(incorrectSuggestionReview),
@@ -2120,19 +2146,24 @@ assert.equal(
   "Not-a-counter reviews should never be approved for public Counter Pick output.",
 );
 assert.equal(
-  isCounterRankingV2ApprovedReviewPublicEligible(highMasteryReview),
+  isCounterRankingV2ApprovedReviewPublicEligible(highMasteryNeedsMoreDataReview),
   false,
-  "Only verified strong/soft mechanical reviews should be approved for public Counter Pick output.",
+  "High-mastery needs-more-data reviews should not be approved for public Counter Pick output.",
+);
+assert.equal(
+  isCounterRankingV2ApprovedReviewPublicEligible(highMasteryStrongReview),
+  true,
+  "Strong/soft reviews can remain public approved when the high-mastery modifier is set.",
 );
 assert.equal(
   isCounterRankingV2PublicCandidateEligible({
     minimumGames: 5,
     observedGames: 3,
-    review: highMasteryReview,
+    review: highMasteryNeedsMoreDataReview,
     useReviewedMechanicalCounters: true,
   }),
   false,
-  "High-mastery reviews should not bypass the public minimum-games threshold.",
+  "High-mastery-only modifier rows should not bypass the public minimum-games threshold.",
 );
 assert.equal(
   normalizeCounterRankingV2PublicEligible({
@@ -2167,6 +2198,11 @@ assert.equal(
   isCounterRankingV2ReviewStatusPublicEligible("not_a_counter"),
   false,
   "Not-a-counter status should disable public eligibility.",
+);
+assert.equal(
+  isCounterRankingV2ReviewStatusPublicEligible("needs_more_data"),
+  false,
+  "Needs-more-data status should not allow public eligibility.",
 );
 assert.equal(
   isCounterRankingV2ReviewStatusPublicEligible("unreviewed"),
@@ -2268,6 +2304,18 @@ const notCounterReviewStatusMigration = readFileSync(
 );
 const counterPickActionsSource = readFileSync(
   new URL("../src/app/admin/league/counter-picks/actions.ts", import.meta.url),
+  "utf8",
+);
+const adminDashboardSource = readFileSync(
+  new URL("../src/components/admin/admin-dashboard.tsx", import.meta.url),
+  "utf8",
+);
+const adminNavSource = readFileSync(
+  new URL("../src/components/admin/admin-nav.tsx", import.meta.url),
+  "utf8",
+);
+const counterPickReviewPageSource = readFileSync(
+  new URL("../src/app/admin/counter-picks/review/page.tsx", import.meta.url),
   "utf8",
 );
 const counterPickAdminSectionSource = readFileSync(
@@ -2418,6 +2466,16 @@ assert.match(
 );
 assert.match(
   counterPickActionsSource,
+  /export async function getCounterRankingV2AllMechanicalReviews/,
+  "The admin action should expose a paged all-review loader for the Counter Review queue.",
+);
+assert.match(
+  counterPickActionsSource,
+  /\.order\("updated_at", \{ ascending: false \}\)[\s\S]*\.range\(from, to\)/,
+  "The Counter Review queue loader should page all mechanical review rows by update time.",
+);
+assert.match(
+  counterPickActionsSource,
   /generated_by: "system"/,
   "Batch review saves should stamp generated_by as system.",
 );
@@ -2525,6 +2583,126 @@ assert.match(
   counterPickAdminSectionSource,
   /generateCounterRankingV2MechanicalSuggestionsForRole/,
   "The admin Shadow Ranking panel should generate suggestions for all supported role profiles.",
+);
+assert.match(
+  counterPickReviewPageSource,
+  /section="counter-picks-review"/,
+  "Counter Review should have its own admin route.",
+);
+assert.match(
+  adminNavSource,
+  /href: "\/admin\/counter-picks\/review"[\s\S]*label: "Counter Review"/,
+  "Admin navigation should include the Counter Review page under Counter Pick.",
+);
+assert.match(
+  adminDashboardSource,
+  /section === "counter-picks-review"[\s\S]*view="review"/,
+  "Admin dashboard should render the Counter Pick review workflow for the review route.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /function CounterRankingV2AdminReviewPanel/,
+  "Counter Review should render a dedicated review queue panel.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /counterRankingV2AdminReviewQueueSections/,
+  "Counter Review should expose review queue sections.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /counterRankingV2AdminReviewSortOptions/,
+  "Counter Review should expose review queue sorting.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /function getCounterRankingV2AdminReviewPriorityScore/,
+  "Counter Review should calculate a dedicated review priority score.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /row\.targetProfile\?\.reviewStatus === "reviewed"[\s\S]*row\.candidateProfile\?\.reviewStatus === "reviewed"/,
+  "Counter Review priority should favor rows where both profiles are reviewed.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /observedGames > 0[\s\S]*Math\.log10\(observedGames \+ 1\)/,
+  "Counter Review priority should consider observed matchup data and game count.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /row\.unsupportedRole[\s\S]*priorityScore -= 500/,
+  "Counter Review priority should strongly penalize unsupported-role rows.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /type CounterRankingV2AdminReviewMode = "all" \| "top_candidates"/,
+  "Counter Review should expose a top-candidates workflow mode.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /const counterRankingV2TopCandidateCaps = \[5, 10, 15\]/,
+  "Counter Review should allow top 5, 10, and 15 candidate caps.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /function getCounterRankingV2TopCandidateRowsPerTarget/,
+  "Counter Review should limit top-candidate rows per target champion.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /row\.review === null \|\| reviewStatus === "unreviewed"/,
+  "Top-candidates mode should focus on unreviewed rows.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /CounterRankingV2TargetReviewSummaryPanel/,
+  "Counter Review should show per-target summary counts.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /already has \{summary\.publicEligible\} public counters/,
+  "Counter Review should warn when a target already has many public counters.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /Review the best candidates first[\s\S]*You do not need to classify every matchup/,
+  "Counter Review should explain that full manual review is not required.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /saveWithFormPatch\(\{ highMasteryRequired: !form\.highMasteryRequired \}\)/,
+  "Counter Review should include a quick high-mastery toggle.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /unsupported\/off-role review row/,
+  "Counter Review should warn about unsupported-role review rows excluded from the normal queue.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /CounterRankingV2AdminBatchPanel/,
+  "Counter Review should expose batch review actions.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /Select visible candidates/,
+  "Counter Review should let admins select the capped top-candidate set for batch review.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /CounterRankingV2AdminPublicPreviewPanel/,
+  "Counter Review should show public Best Counters and Bad Into previews.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /publicEligible === true && !canBePublicEligible/,
+  "Counter Review batch public eligibility should skip ineligible statuses safely.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /reviewStatus === "verified_strong_counter" \|\|\s+reviewStatus === "verified_soft_counter"/,
+  "Counter Review public eligibility should only allow verified strong or soft counter statuses.",
 );
 assert.match(
   counterPickAdminSectionSource,

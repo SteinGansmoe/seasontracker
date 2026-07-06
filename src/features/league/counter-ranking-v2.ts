@@ -236,7 +236,6 @@ export type CounterRankingV2AdjustmentReason =
   | "practical_difficulty";
 
 export type CounterRankingV2ReviewStatus =
-  | "high_mastery_required"
   | "incorrect_suggestion"
   | "needs_more_data"
   | "not_a_counter"
@@ -249,6 +248,7 @@ export type CounterRankingV2ReviewFilter =
   | "auto_approval_candidate"
   | "auto_approved"
   | "auto_suggested"
+  | "high_mastery_required"
   | "incorrect_suggestion"
   | "low_sample"
   | "manual_approved"
@@ -309,6 +309,7 @@ export type CounterRankingV2MechanicalReview = {
   finalMechanicalScore: number;
   generatedAt: string | null;
   generatedBy: string | null;
+  highMasteryRequired: boolean;
   manualAdjustment: number;
   publicEligible: boolean;
   reviewStatus: CounterRankingV2ReviewStatus;
@@ -354,6 +355,7 @@ export type CounterRankingV2AutomationBlockerSummary = Record<
 >;
 
 export type CounterRankingV2ReviewProgressSummary = {
+  highMasteryRequired: number;
   incorrectSuggestions: number;
   needsMoreData: number;
   notCounters: number;
@@ -379,6 +381,7 @@ export type CounterRankingV2PublicPreviewRow = {
   confidenceLabel: string;
   currentPublicRank: number | null;
   finalReviewedScore: number;
+  highMasteryRequired: boolean;
   isLowSampleDesignCounter: boolean;
   observedGames: number | null;
   reviewStatus: CounterRankingV2ReviewStatus;
@@ -427,7 +430,6 @@ export const counterRankingV2ReviewStatuses = [
   "verified_strong_counter",
   "verified_soft_counter",
   "not_a_counter",
-  "high_mastery_required",
   "needs_more_data",
   "incorrect_suggestion",
 ] as const satisfies readonly CounterRankingV2ReviewStatus[];
@@ -2487,6 +2489,10 @@ export function isCounterRankingV2RowMatchingReviewFilter({
     return observedGames > 0 && observedGames < minimumGames;
   }
 
+  if (filter === "high_mastery_required") {
+    return Boolean(row.review?.highMasteryRequired);
+  }
+
   if (isCounterRankingV2AutomationStatus(filter)) {
     return row.automationSuggestion?.automationStatus === filter;
   }
@@ -3014,6 +3020,8 @@ export function getCounterRankingV2ReviewProgressSummary(
       const isUnreviewed = row.review === null || reviewStatus === "unreviewed";
 
       return {
+        highMasteryRequired:
+          summary.highMasteryRequired + (row.review?.highMasteryRequired ? 1 : 0),
         incorrectSuggestions:
           summary.incorrectSuggestions + (reviewStatus === "incorrect_suggestion" ? 1 : 0),
         needsMoreData: summary.needsMoreData + (reviewStatus === "needs_more_data" ? 1 : 0),
@@ -3030,6 +3038,7 @@ export function getCounterRankingV2ReviewProgressSummary(
       };
     },
     {
+      highMasteryRequired: 0,
       incorrectSuggestions: 0,
       needsMoreData: 0,
       notCounters: 0,
@@ -3060,6 +3069,7 @@ export function getCounterRankingV2PublicPreviewRows({
       confidenceLabel: row.observed?.confidence.shortLabel ?? "No data",
       currentPublicRank: row.observed?.rank ?? null,
       finalReviewedScore: row.review?.finalMechanicalScore ?? 0,
+      highMasteryRequired: Boolean(row.review?.highMasteryRequired),
       isLowSampleDesignCounter: (row.observed?.games ?? 0) < minimumGames,
       observedGames: row.observed?.games ?? null,
       reviewStatus: row.review?.reviewStatus ?? "unreviewed",
@@ -3121,6 +3131,7 @@ export function createCounterRankingV2MechanicalReview({
   enemyChampionId,
   generatedAt = null,
   generatedBy = null,
+  highMasteryRequired = false,
   manualAdjustment = 0,
   publicEligible = false,
   reviewStatus = counterRankingV2DefaultReviewStatus,
@@ -3140,6 +3151,7 @@ export function createCounterRankingV2MechanicalReview({
       | "createdAt"
       | "generatedAt"
       | "generatedBy"
+      | "highMasteryRequired"
       | "manualAdjustment"
       | "publicEligible"
       | "reviewStatus"
@@ -3163,6 +3175,7 @@ export function createCounterRankingV2MechanicalReview({
     }),
     generatedAt,
     generatedBy,
+    highMasteryRequired,
     manualAdjustment: boundedAdjustment,
     publicEligible: normalizeCounterRankingV2PublicEligible({
       publicEligible,
@@ -3233,10 +3246,8 @@ export function getCounterRankingV2ProfileImpactLabel(value: number) {
 export function isCounterRankingV2ReviewStatusPublicEligible(
   reviewStatus: CounterRankingV2ReviewStatus,
 ) {
-  return (
-    reviewStatus !== "incorrect_suggestion" &&
-    reviewStatus !== "not_a_counter" &&
-    reviewStatus !== "unreviewed"
+  return (counterRankingV2PublicApprovedReviewStatuses as readonly CounterRankingV2ReviewStatus[]).includes(
+    reviewStatus,
   );
 }
 

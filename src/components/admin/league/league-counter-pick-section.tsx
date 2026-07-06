@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   CheckCircle2,
@@ -22,6 +22,7 @@ import {
   backfillCounterRankingV2GeneratedDraftProfiles,
   batchSaveCounterRankingV2MechanicalReviews,
   getCounterPickManagementMetrics,
+  getCounterRankingV2AllMechanicalReviews,
   getCounterRankingV2EditableProfiles,
   getCounterRankingV2MechanicalReviews,
   getCounterRankingV2ProfileReviews,
@@ -72,6 +73,7 @@ import {
   isCounterRankingV2TraitDefinitionVisibleForRole,
   isCounterRankingV2ReviewPublicEligible,
   isCounterRankingV2ReviewStatusPublicEligible,
+  isCounterRankingV2RowMatchingReviewFilter,
   normalizeCounterRankingV2TraitId,
   sortCounterRankingV2RowsByReviewPriority,
   useReviewedMechanicalCountersPublicly,
@@ -125,6 +127,7 @@ type CounterPickAdminView =
   | "editorial"
   | "overview"
   | "profile-review"
+  | "review"
   | "shadow-ranking";
 type CounterPickEditForm = {
   counter_strength: string;
@@ -137,6 +140,7 @@ type CounterPickCreateForm = CounterPickEditForm & {
 type CounterRankingV2ReviewForm = {
   adjustmentReason: CounterRankingV2AdjustmentReason;
   adminReviewNote: string;
+  highMasteryRequired: boolean;
   manualAdjustment: string;
   publicEligible: boolean;
   reviewStatus: CounterRankingV2ReviewStatus;
@@ -160,6 +164,47 @@ type CounterRankingV2ShadowReviewFilterOption = {
   filter: CounterRankingV2ReviewFilter;
   label: string;
 };
+type CounterRankingV2AdminReviewSort =
+  | "candidate_champion"
+  | "champion_name"
+  | "highest_mechanical_score"
+  | "lowest_observed_rank_mismatch"
+  | "lowest_sample_first"
+  | "most_games"
+  | "newest_review_update"
+  | "review_priority"
+  | "target_champion";
+type CounterRankingV2AdminReviewMode = "all" | "top_candidates";
+type CounterRankingV2AdminReviewQueueSection =
+  | "all"
+  | "auto_approval_candidate"
+  | "auto_suggested"
+  | "needs_review"
+  | "low_sample"
+  | "public_eligible"
+  | "rejected"
+  | "needs_more_data";
+type CounterRankingV2AdminReviewRow = CounterRankingV2ComparisonRow & {
+  candidateProfile: CounterRankingV2ChampionProfile | null;
+  rowKey: string;
+  targetChampionId: string;
+  targetProfile: CounterRankingV2ChampionProfile | null;
+  unsupportedRole: boolean;
+};
+type CounterRankingV2TargetReviewSummary = {
+  label: string;
+  needsMoreData: number;
+  notCounters: number;
+  publicEligible: number;
+  remainingUnreviewed: number;
+  targetChampionId: string;
+  verifiedSoft: number;
+  verifiedStrong: number;
+};
+type CounterRankingV2AdminBatchReviewStatus = Exclude<
+  CounterRankingV2ReviewStatus,
+  "unreviewed"
+>;
 
 const emptyCreateForm: CounterPickCreateForm = {
   counter_champion_id: "",
@@ -175,6 +220,7 @@ const counterRankingV2ShadowReviewFilterOptions = [
   { filter: "needs_review", label: "Needs review automation" },
   { filter: "manual_approved", label: "Manual approved" },
   { filter: "manual_rejected", label: "Manual rejected" },
+  { filter: "high_mastery_required", label: "High mastery required" },
   { filter: "unreviewed", label: "Unreviewed" },
   { filter: "verified_strong_counter", label: "Verified strong counter" },
   { filter: "verified_soft_counter", label: "Verified soft counter" },
@@ -184,6 +230,42 @@ const counterRankingV2ShadowReviewFilterOptions = [
   { filter: "public_eligible", label: "Public eligible" },
   { filter: "low_sample", label: "Low sample" },
 ] as const satisfies readonly CounterRankingV2ShadowReviewFilterOption[];
+const counterRankingV2AdminReviewSortOptions = [
+  { sort: "review_priority", label: "Review priority" },
+  { sort: "highest_mechanical_score", label: "Highest mechanical score" },
+  { sort: "lowest_observed_rank_mismatch", label: "Lowest observed rank mismatch" },
+  { sort: "most_games", label: "Most games" },
+  { sort: "lowest_sample_first", label: "Lowest sample first" },
+  { sort: "newest_review_update", label: "Newest review/update" },
+  { sort: "champion_name", label: "Champion name" },
+  { sort: "target_champion", label: "Target champion" },
+  { sort: "candidate_champion", label: "Candidate champion" },
+] as const satisfies ReadonlyArray<{
+  label: string;
+  sort: CounterRankingV2AdminReviewSort;
+}>;
+const counterRankingV2AdminReviewQueueSections = [
+  { section: "all", label: "All review rows" },
+  { section: "auto_approval_candidate", label: "Auto approval candidates" },
+  { section: "auto_suggested", label: "Auto suggested" },
+  { section: "needs_review", label: "Needs review" },
+  { section: "low_sample", label: "Low sample mechanical counters" },
+  { section: "public_eligible", label: "Public eligible reviewed counters" },
+  { section: "rejected", label: "Rejected / Not a counter" },
+  { section: "needs_more_data", label: "Needs more data" },
+] as const satisfies ReadonlyArray<{
+  label: string;
+  section: CounterRankingV2AdminReviewQueueSection;
+}>;
+const counterRankingV2AdminBatchReviewStatuses = [
+  "verified_strong_counter",
+  "verified_soft_counter",
+  "not_a_counter",
+  "needs_more_data",
+  "incorrect_suggestion",
+] as const satisfies readonly CounterRankingV2AdminBatchReviewStatus[];
+const counterRankingV2TopCandidateCaps = [5, 10, 15] as const;
+const counterRankingV2PublicCounterWarningThreshold = 5;
 
 export function AdminLeagueCounterPicksSection({
   champions,
@@ -239,6 +321,9 @@ export function AdminLeagueCounterPicksSection({
   const [counterRankingV2ReviewsByCandidateId, setCounterRankingV2ReviewsByCandidateId] = useState<
     Map<string, CounterRankingV2MechanicalReview>
   >(() => new Map());
+  const [counterRankingV2AllReviewsByKey, setCounterRankingV2AllReviewsByKey] = useState<
+    Map<string, CounterRankingV2MechanicalReview>
+  >(() => new Map());
   const [counterRankingV2ProfileReviewsByChampionId, setCounterRankingV2ProfileReviewsByChampionId] =
     useState<Map<string, CounterRankingV2ProfileReview>>(() => new Map());
   const [
@@ -269,7 +354,7 @@ export function AdminLeagueCounterPicksSection({
   const [hasResolvedInitialSelection, setHasResolvedInitialSelection] = useState(false);
   const hasInitializedSelection = useRef(false);
   const isCounterRankingV2ProfileWorkspace =
-    view === "profile-review" || view === "shadow-ranking";
+    view === "profile-review" || view === "review" || view === "shadow-ranking";
   const shouldDefaultCounterRankingV2Champion = view === "shadow-ranking";
 
   const championsById = useMemo(
@@ -511,6 +596,15 @@ export function AdminLeagueCounterPicksSection({
     void loadCounterRankingV2EditableProfiles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCounterRankingV2ProfileWorkspace]);
+
+  useEffect(() => {
+    if (view !== "review") {
+      return;
+    }
+
+    void loadCounterRankingV2AllReviews();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
 
   async function getAccessToken() {
     if (!supabase) {
@@ -775,6 +869,51 @@ export function AdminLeagueCounterPicksSection({
     });
   }
 
+  async function loadCounterRankingV2AllReviews() {
+    const tokenResult = await getAccessToken();
+
+    if (!tokenResult.ok) {
+      setCounterRankingV2AllReviewsByKey(new Map());
+      setCounterRankingV2ReviewStatus({
+        error: tokenResult.error,
+        isLoading: false,
+        success: null,
+      });
+      return;
+    }
+
+    setCounterRankingV2ReviewStatus({ error: null, isLoading: true, success: null });
+
+    const result = await getCounterRankingV2AllMechanicalReviews({
+      accessToken: tokenResult.accessToken,
+    });
+
+    if (!result.ok) {
+      setCounterRankingV2AllReviewsByKey(new Map());
+      setCounterRankingV2ReviewStatus({ error: result.error, isLoading: false, success: null });
+      return;
+    }
+
+    setCounterRankingV2AllReviewsByKey(
+      new Map(
+        result.reviews.map((review) => [
+          getCounterRankingV2ReviewRowKey({
+            candidateChampionId: review.counterChampionId,
+            role: review.role,
+            targetChampionId: review.enemyChampionId,
+          }),
+          review,
+        ] as const),
+      ),
+    );
+    setCounterRankingV2ReviewStatus({
+      error: null,
+      isLoading: false,
+      success:
+        result.reviews.length > 0 ? `${result.reviews.length} review queue rows loaded.` : null,
+    });
+  }
+
   async function applyCounterRankingV2DraftProfileImprovements(
     suggestions: CounterRankingV2DraftProfileSuggestion[],
   ) {
@@ -1033,10 +1172,11 @@ export function AdminLeagueCounterPicksSection({
       adminReviewNote: form.adminReviewNote,
       counterChampionId: canonicalCounterChampionId,
       enemyChampionId: canonicalEnemyChampionId,
+      highMasteryRequired: form.highMasteryRequired,
       manualAdjustment,
       publicEligible: form.publicEligible,
       reviewStatus: form.reviewStatus,
-      role: selectedRole,
+      role: row.mechanicalResult.role ?? selectedRole,
     });
 
     setSavingCounterRankingV2ReviewKey(null);
@@ -1050,6 +1190,19 @@ export function AdminLeagueCounterPicksSection({
       const nextReviews = new Map(currentReviews);
 
       nextReviews.set(normalizeCounterRankingV2ChampionId(result.review.counterChampionId), result.review);
+      return nextReviews;
+    });
+    setCounterRankingV2AllReviewsByKey((currentReviews) => {
+      const nextReviews = new Map(currentReviews);
+
+      nextReviews.set(
+        getCounterRankingV2ReviewRowKey({
+          candidateChampionId: result.review.counterChampionId,
+          role: result.review.role,
+          targetChampionId: result.review.enemyChampionId,
+        }),
+        result.review,
+      );
       return nextReviews;
     });
     setCounterRankingV2ReviewStatus({
@@ -1128,10 +1281,145 @@ export function AdminLeagueCounterPicksSection({
 
       return nextReviews;
     });
+    setCounterRankingV2AllReviewsByKey((currentReviews) => {
+      const nextReviews = new Map(currentReviews);
+
+      for (const review of result.reviews) {
+        nextReviews.set(
+          getCounterRankingV2ReviewRowKey({
+            candidateChampionId: review.counterChampionId,
+            role: review.role,
+            targetChampionId: review.enemyChampionId,
+          }),
+          review,
+        );
+      }
+
+      return nextReviews;
+    });
     setCounterRankingV2ReviewStatus({
       error: null,
       isLoading: false,
       success: `${result.reviews.length} mechanical reviews updated by batch action.`,
+    });
+  }
+
+  async function batchSaveCounterRankingV2ReviewQueueRows({
+    publicEligible,
+    rows,
+    reviewStatus,
+  }: {
+    publicEligible?: boolean;
+    rows: CounterRankingV2AdminReviewRow[];
+    reviewStatus?: CounterRankingV2AdminBatchReviewStatus;
+  }) {
+    if (rows.length === 0) {
+      setCounterRankingV2ReviewStatus({
+        error: "Select at least one review queue row first.",
+        isLoading: false,
+        success: null,
+      });
+      return;
+    }
+
+    const tokenResult = await getAccessToken();
+
+    if (!tokenResult.ok) {
+      setCounterRankingV2ReviewStatus({
+        error: tokenResult.error,
+        isLoading: false,
+        success: null,
+      });
+      return;
+    }
+
+    setSavingCounterRankingV2ReviewKey("batch");
+    setCounterRankingV2ReviewStatus({ error: null, isLoading: true, success: null });
+
+    const savedReviews: CounterRankingV2MechanicalReview[] = [];
+    const skippedRows: string[] = [];
+
+    for (const row of rows) {
+      const nextReviewStatus = reviewStatus ?? row.review?.reviewStatus ?? "unreviewed";
+      const canBePublicEligible =
+        nextReviewStatus === "verified_strong_counter" ||
+        nextReviewStatus === "verified_soft_counter";
+      const nextPublicEligible =
+        publicEligible === undefined
+          ? canBePublicEligible && Boolean(row.review?.publicEligible)
+          : canBePublicEligible && publicEligible;
+
+      if (publicEligible === true && !canBePublicEligible) {
+        skippedRows.push(row.rowKey);
+        continue;
+      }
+
+      const result = await saveCounterRankingV2MechanicalReview({
+        accessToken: tokenResult.accessToken,
+        adjustmentReason: row.review?.adjustmentReason ?? counterRankingV2DefaultAdjustmentReason,
+        adminReviewNote: row.review?.adminReviewNote ?? null,
+        counterChampionId:
+          counterRankingV2ChampionsById.get(normalizeCounterRankingV2ChampionId(row.candidateChampionId))
+            ?.id ?? row.candidateChampionId,
+        enemyChampionId:
+          counterRankingV2ChampionsById.get(normalizeCounterRankingV2ChampionId(row.targetChampionId))
+            ?.id ?? row.targetChampionId,
+        highMasteryRequired: row.review?.highMasteryRequired ?? false,
+        manualAdjustment: row.review?.manualAdjustment ?? 0,
+        publicEligible: nextPublicEligible,
+        reviewStatus: nextReviewStatus,
+        role: row.mechanicalResult.role ?? selectedRole,
+      });
+
+      if (!result.ok) {
+        setSavingCounterRankingV2ReviewKey(null);
+        setCounterRankingV2ReviewStatus({
+          error: `${savedReviews.length} saved, ${skippedRows.length} skipped before error: ${result.error}`,
+          isLoading: false,
+          success: null,
+        });
+        return;
+      }
+
+      savedReviews.push(result.review);
+    }
+
+    setSavingCounterRankingV2ReviewKey(null);
+    setCounterRankingV2AllReviewsByKey((currentReviews) => {
+      const nextReviews = new Map(currentReviews);
+
+      for (const review of savedReviews) {
+        nextReviews.set(
+          getCounterRankingV2ReviewRowKey({
+            candidateChampionId: review.counterChampionId,
+            role: review.role,
+            targetChampionId: review.enemyChampionId,
+          }),
+          review,
+        );
+      }
+
+      return nextReviews;
+    });
+    setCounterRankingV2ReviewsByCandidateId((currentReviews) => {
+      const nextReviews = new Map(currentReviews);
+
+      for (const review of savedReviews) {
+        if (
+          normalizeCounterRankingV2ChampionId(review.enemyChampionId) ===
+            normalizeCounterRankingV2ChampionId(effectiveSelectedChampionId) &&
+          review.role === selectedRole
+        ) {
+          nextReviews.set(normalizeCounterRankingV2ChampionId(review.counterChampionId), review);
+        }
+      }
+
+      return nextReviews;
+    });
+    setCounterRankingV2ReviewStatus({
+      error: null,
+      isLoading: false,
+      success: `${savedReviews.length} review queue row${savedReviews.length === 1 ? "" : "s"} updated${skippedRows.length > 0 ? `; skipped ${skippedRows.length} ineligible row${skippedRows.length === 1 ? "" : "s"}.` : "."}`,
     });
   }
 
@@ -1421,6 +1709,36 @@ export function AdminLeagueCounterPicksSection({
           selectedRole={selectedRole}
         />
       </div>
+    );
+  }
+
+  if (view === "review") {
+    return (
+      <CounterRankingV2AdminReviewPanel
+        allReviewsByKey={counterRankingV2AllReviewsByKey}
+        champions={champions}
+        championsById={counterRankingV2ChampionsById}
+        enemyChampionId={effectiveSelectedChampionId}
+        isBatchSaving={savingCounterRankingV2ReviewKey === "batch"}
+        observedByChampionId={counterRankingV2ObservedByChampionId}
+        onBatchReview={(input) => void batchSaveCounterRankingV2ReviewQueueRows(input)}
+        onRefresh={() => {
+          void loadCounterRankingV2AllReviews();
+          void loadCounterRankingV2ProfileReviews();
+          void loadCounterRankingV2EditableProfiles();
+        }}
+        onSaveReview={(row, form) => void saveCounterRankingV2Review(row, form)}
+        onSelectEnemyChampion={(championId) => {
+          setSelectedChampionId(championId);
+          setChampionSearch(championsById.get(championId)?.name ?? "");
+        }}
+        onSelectRole={setSelectedRole}
+        profileOverridesByChampionId={counterRankingV2ProfileOverridesByChampionId}
+        profileStatusesByChampionId={counterRankingV2ProfileStatusesByChampionId}
+        reviewStatus={counterRankingV2ReviewStatus}
+        savingReviewKey={savingCounterRankingV2ReviewKey}
+        selectedRole={selectedRole}
+      />
     );
   }
 
@@ -3208,6 +3526,1084 @@ function CounterRankingV2ProfileTraitEditor({
   );
 }
 
+function CounterRankingV2AdminReviewPanel({
+  allReviewsByKey,
+  champions,
+  championsById,
+  enemyChampionId,
+  isBatchSaving,
+  observedByChampionId,
+  onBatchReview,
+  onRefresh,
+  onSaveReview,
+  onSelectEnemyChampion,
+  onSelectRole,
+  profileOverridesByChampionId,
+  profileStatusesByChampionId,
+  reviewStatus,
+  savingReviewKey,
+  selectedRole,
+}: {
+  allReviewsByKey: Map<string, CounterRankingV2MechanicalReview>;
+  champions: AdminLeagueChampion[];
+  championsById: Map<string, AdminLeagueChampion>;
+  enemyChampionId: string;
+  isBatchSaving: boolean;
+  observedByChampionId: Map<string, CounterRankingV2ObservedRankSnapshot>;
+  onBatchReview: (input: {
+    publicEligible?: boolean;
+    rows: CounterRankingV2AdminReviewRow[];
+    reviewStatus?: CounterRankingV2AdminBatchReviewStatus;
+  }) => void;
+  onRefresh: () => void;
+  onSaveReview: (row: CounterRankingV2ComparisonRow, form: CounterRankingV2ReviewForm) => void;
+  onSelectEnemyChampion: (championId: string) => void;
+  onSelectRole: (role: LeagueRole) => void;
+  profileOverridesByChampionId: CounterRankingV2ProfileByChampionId;
+  profileStatusesByChampionId: CounterRankingV2ProfileStatusByChampionId;
+  reviewStatus: FormStatus;
+  savingReviewKey: string | null;
+  selectedRole: LeagueRole;
+}) {
+  const [automationFilter, setAutomationFilter] = useState<CounterRankingV2AutomationStatus | "all">("all");
+  const [candidateQuery, setCandidateQuery] = useState("");
+  const [dataFilter, setDataFilter] = useState<"all" | "has_observed" | "low_sample" | "no_observed">("all");
+  const [page, setPage] = useState(1);
+  const [publicFilter, setPublicFilter] = useState<"all" | "not_public" | "public_eligible">("all");
+  const [queueSection, setQueueSection] = useState<CounterRankingV2AdminReviewQueueSection>("all");
+  const [reviewFilter, setReviewFilter] = useState<CounterRankingV2ReviewFilter | "reviewed_only">("all");
+  const [reviewMode, setReviewMode] = useState<CounterRankingV2AdminReviewMode>("top_candidates");
+  const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(() => new Set());
+  const [sortMode, setSortMode] = useState<CounterRankingV2AdminReviewSort>("review_priority");
+  const [strengthFilter, setStrengthFilter] = useState<"all" | "soft_counter" | "strong_counter">("all");
+  const [topCandidateCap, setTopCandidateCap] = useState<(typeof counterRankingV2TopCandidateCaps)[number]>(10);
+  const roleSupportedChampions = useMemo(
+    () =>
+      champions
+        .filter((champion) => isChampionSupportedInRole(champion.id, selectedRole))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [champions, selectedRole],
+  );
+  const targetChampionIds = useMemo(() => {
+    if (enemyChampionId) {
+      return [enemyChampionId];
+    }
+
+    return roleSupportedChampions
+      .filter((champion) =>
+        getCounterRankingV2ChampionProfile(
+          champion.id,
+          profileStatusesByChampionId,
+          profileOverridesByChampionId,
+          selectedRole,
+        ),
+      )
+      .map((champion) => champion.id);
+  }, [
+    enemyChampionId,
+    profileOverridesByChampionId,
+    profileStatusesByChampionId,
+    roleSupportedChampions,
+    selectedRole,
+  ]);
+  const unsupportedRoleReviewCount = useMemo(
+    () =>
+      Array.from(allReviewsByKey.values()).filter(
+        (review) =>
+          review.role === selectedRole &&
+          (!isChampionSupportedInRole(review.enemyChampionId, selectedRole) ||
+            !isChampionSupportedInRole(review.counterChampionId, selectedRole)),
+      ).length,
+    [allReviewsByKey, selectedRole],
+  );
+  const queueRows = useMemo(() => {
+    const rows: CounterRankingV2AdminReviewRow[] = [];
+
+    for (const targetChampionId of targetChampionIds) {
+      const reviewsByCandidateId = new Map(
+        Array.from(allReviewsByKey.values())
+          .filter(
+            (review) =>
+              review.role === selectedRole &&
+              normalizeCounterRankingV2ChampionId(review.enemyChampionId) ===
+                normalizeCounterRankingV2ChampionId(targetChampionId),
+          )
+          .map((review) => [
+            normalizeCounterRankingV2ChampionId(review.counterChampionId),
+            review,
+          ] as const),
+      );
+      const targetObservedByChampionId =
+        enemyChampionId &&
+        normalizeCounterRankingV2ChampionId(enemyChampionId) ===
+          normalizeCounterRankingV2ChampionId(targetChampionId)
+          ? observedByChampionId
+          : new Map<string, CounterRankingV2ObservedRankSnapshot>();
+      const targetRows = generateCounterRankingV2MechanicalSuggestionsForRole({
+        enemyChampionId: targetChampionId,
+        observedByChampionId: targetObservedByChampionId,
+        profileOverridesByChampionId,
+        profileStatusesByChampionId,
+        reviewsByCandidateId,
+        role: selectedRole,
+      });
+
+      for (const row of targetRows) {
+        const rowKey = getCounterRankingV2ReviewRowKey({
+          candidateChampionId: row.candidateChampionId,
+          role: row.mechanicalResult.role ?? selectedRole,
+          targetChampionId,
+        });
+        const candidateProfile = getCounterRankingV2ChampionProfile(
+          row.candidateChampionId,
+          profileStatusesByChampionId,
+          profileOverridesByChampionId,
+          selectedRole,
+        );
+        const targetProfile = getCounterRankingV2ChampionProfile(
+          targetChampionId,
+          profileStatusesByChampionId,
+          profileOverridesByChampionId,
+          selectedRole,
+        );
+        const unsupportedRole =
+          !isChampionSupportedInRole(row.candidateChampionId, selectedRole) ||
+          !isChampionSupportedInRole(targetChampionId, selectedRole);
+
+        if (unsupportedRole) {
+          continue;
+        }
+
+        rows.push({
+          ...row,
+          candidateProfile,
+          rowKey,
+          targetChampionId,
+          targetProfile,
+          unsupportedRole,
+        });
+      }
+    }
+
+    return rows;
+  }, [
+    allReviewsByKey,
+    enemyChampionId,
+    observedByChampionId,
+    profileOverridesByChampionId,
+    profileStatusesByChampionId,
+    selectedRole,
+    targetChampionIds,
+  ]);
+  const summary = useMemo(
+    () => getCounterRankingV2AdminReviewSummary(queueRows, unsupportedRoleReviewCount),
+    [queueRows, unsupportedRoleReviewCount],
+  );
+  const targetSummaries = useMemo(
+    () =>
+      getCounterRankingV2TargetReviewSummaries({
+        championsById,
+        role: selectedRole,
+        rows: queueRows,
+      }),
+    [championsById, queueRows, selectedRole],
+  );
+  const visibleRows = useMemo(
+    () => {
+      const filteredRows = queueRows.filter((row) =>
+        isCounterRankingV2AdminReviewRowVisible({
+          automationFilter,
+          candidateQuery,
+          dataFilter,
+          publicFilter,
+          queueSection,
+          reviewFilter,
+          row,
+          strengthFilter,
+        }),
+      );
+      const modeRows =
+        reviewMode === "top_candidates"
+          ? getCounterRankingV2TopCandidateRowsPerTarget({
+              rows: filteredRows,
+              topCandidateCap,
+            })
+          : filteredRows;
+
+      return sortCounterRankingV2AdminReviewRows(
+        modeRows,
+        sortMode,
+        championsById,
+      );
+    },
+    [
+      automationFilter,
+      candidateQuery,
+      championsById,
+      dataFilter,
+      publicFilter,
+      queueRows,
+      queueSection,
+      reviewFilter,
+      reviewMode,
+      sortMode,
+      strengthFilter,
+      topCandidateCap,
+    ],
+  );
+  const pageSize = 50;
+  const totalPages = Math.max(1, Math.ceil(visibleRows.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const paginatedRows = visibleRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const selectedRows = visibleRows.filter((row) => selectedRowKeys.has(row.rowKey));
+  const previewRows = selectedRows.length > 0 ? selectedRows : visibleRows.slice(0, 12);
+
+  function runBatchReview({
+    publicEligible,
+    reviewStatus: nextReviewStatus,
+  }: {
+    publicEligible?: boolean;
+    reviewStatus?: CounterRankingV2AdminBatchReviewStatus;
+  }) {
+    const destructiveStatuses: CounterRankingV2AdminBatchReviewStatus[] = [
+      "incorrect_suggestion",
+      "not_a_counter",
+    ];
+
+    if (
+      nextReviewStatus &&
+      destructiveStatuses.includes(nextReviewStatus) &&
+      typeof window !== "undefined" &&
+      !window.confirm(
+        `Mark ${selectedRows.length} selected row(s) as ${formatCounterRankingV2ReviewStatus(nextReviewStatus)}?`,
+      )
+    ) {
+      return;
+    }
+
+    onBatchReview({
+      publicEligible,
+      reviewStatus: nextReviewStatus,
+      rows: selectedRows,
+    });
+  }
+
+  return (
+    <div className="space-y-6">
+      <Card className="border-white/10 bg-[#10182b]/90 text-white shadow-xl shadow-black/15">
+        <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <CardTitle className="font-mono text-xl">Counter Review</CardTitle>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
+                Review mechanical counter suggestions across champion-role profiles, approve public
+                candidates, and keep rejected or not-a-counter rows out of public Counter Pick.
+              </p>
+            </div>
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              onClick={onRefresh}
+              type="button"
+              variant="ghost"
+            >
+              <RefreshCw className="size-4" aria-hidden="true" />
+              Refresh
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <CounterRankingV2AdminReviewSummaryGrid summary={summary} />
+
+          <p className="rounded-md border border-cyan-300/20 bg-cyan-500/10 p-3 text-sm leading-6 text-cyan-100">
+            Review the best candidates first. You do not need to classify every matchup. Public
+            Counter Pick only uses reviewed and public eligible counters.
+          </p>
+
+          <CounterRankingV2TargetReviewSummaryPanel summaries={targetSummaries} />
+
+          {unsupportedRoleReviewCount > 0 ? (
+            <p className="rounded-md border border-amber-300/20 bg-amber-500/10 p-3 text-sm text-amber-100">
+              {unsupportedRoleReviewCount} unsupported/off-role review row{unsupportedRoleReviewCount === 1 ? "" : "s"} excluded from the normal queue.
+            </p>
+          ) : null}
+
+          <div className="grid gap-4 lg:grid-cols-4">
+            <AdminReviewSelect
+              label="Role"
+              onChange={(value) => {
+                onSelectRole(value as LeagueRole);
+                setPage(1);
+              }}
+              value={selectedRole}
+            >
+              {leagueRoles.map((role) => (
+                <option className={selectOptionClassName} key={role} value={role}>
+                  {getRoleLabel(role)}
+                </option>
+              ))}
+            </AdminReviewSelect>
+
+            <AdminReviewSelect
+              label="Target champion"
+              onChange={(value) => {
+                onSelectEnemyChampion(value);
+                setPage(1);
+              }}
+              value={enemyChampionId}
+            >
+              <option className={selectOptionClassName} value="">
+                All reviewed profile targets
+              </option>
+              {roleSupportedChampions.map((champion) => (
+                <option className={selectOptionClassName} key={champion.id} value={champion.id}>
+                  {champion.name}
+                </option>
+              ))}
+            </AdminReviewSelect>
+
+            <label className="block space-y-2">
+              <span className="text-sm text-zinc-300">Candidate champion</span>
+              <Input
+                className="h-10 border-white/10 bg-white/5 text-zinc-100 placeholder:text-zinc-500"
+                onChange={(event) => {
+                  setCandidateQuery(event.target.value);
+                  setPage(1);
+                }}
+                placeholder="Search candidate..."
+                type="search"
+                value={candidateQuery}
+              />
+            </label>
+
+            <AdminReviewSelect
+              label="Sort"
+              onChange={(value) => setSortMode(value as CounterRankingV2AdminReviewSort)}
+              value={sortMode}
+            >
+              {counterRankingV2AdminReviewSortOptions.map((option) => (
+                <option className={selectOptionClassName} key={option.sort} value={option.sort}>
+                  {option.label}
+                </option>
+              ))}
+            </AdminReviewSelect>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-5">
+            <AdminReviewSelect
+              label="Queue mode"
+              onChange={(value) => {
+                setReviewMode(value as CounterRankingV2AdminReviewMode);
+                setPage(1);
+              }}
+              value={reviewMode}
+            >
+              <option className={selectOptionClassName} value="top_candidates">
+                Top candidates per champion
+              </option>
+              <option className={selectOptionClassName} value="all">All matching rows</option>
+            </AdminReviewSelect>
+            <AdminReviewSelect
+              label="Top candidates"
+              onChange={(value) => {
+                setTopCandidateCap(Number(value) as (typeof counterRankingV2TopCandidateCaps)[number]);
+                setPage(1);
+              }}
+              value={String(topCandidateCap)}
+            >
+              {counterRankingV2TopCandidateCaps.map((cap) => (
+                <option className={selectOptionClassName} key={cap} value={cap}>
+                  Show top {cap}
+                </option>
+              ))}
+            </AdminReviewSelect>
+            <AdminReviewSelect
+              label="Review status"
+              onChange={(value) => {
+                setReviewFilter(value as CounterRankingV2ReviewFilter | "reviewed_only");
+                setPage(1);
+              }}
+              value={reviewFilter}
+            >
+              <option className={selectOptionClassName} value="all">All statuses</option>
+              <option className={selectOptionClassName} value="reviewed_only">Reviewed only</option>
+              <option className={selectOptionClassName} value="high_mastery_required">
+                High mastery required
+              </option>
+              {counterRankingV2ReviewStatuses.map((status) => (
+                <option className={selectOptionClassName} key={status} value={status}>
+                  {formatCounterRankingV2ReviewStatus(status)}
+                </option>
+              ))}
+            </AdminReviewSelect>
+            <AdminReviewSelect
+              label="Automation"
+              onChange={(value) => {
+                setAutomationFilter(value as CounterRankingV2AutomationStatus | "all");
+                setPage(1);
+              }}
+              value={automationFilter}
+            >
+              <option className={selectOptionClassName} value="all">All automation</option>
+              <option className={selectOptionClassName} value="auto_approval_candidate">Auto approval candidates</option>
+              <option className={selectOptionClassName} value="auto_suggested">Auto suggested</option>
+              <option className={selectOptionClassName} value="needs_review">Needs review</option>
+              <option className={selectOptionClassName} value="manual_approved">Manual approved</option>
+              <option className={selectOptionClassName} value="manual_rejected">Manual rejected</option>
+            </AdminReviewSelect>
+            <AdminReviewSelect
+              label="Public"
+              onChange={(value) => {
+                setPublicFilter(value as typeof publicFilter);
+                setPage(1);
+              }}
+              value={publicFilter}
+            >
+              <option className={selectOptionClassName} value="all">All public states</option>
+              <option className={selectOptionClassName} value="public_eligible">Public eligible</option>
+              <option className={selectOptionClassName} value="not_public">Not public</option>
+            </AdminReviewSelect>
+            <AdminReviewSelect
+              label="Observed data"
+              onChange={(value) => {
+                setDataFilter(value as typeof dataFilter);
+                setPage(1);
+              }}
+              value={dataFilter}
+            >
+              <option className={selectOptionClassName} value="all">All samples</option>
+              <option className={selectOptionClassName} value="has_observed">Has observed data</option>
+              <option className={selectOptionClassName} value="no_observed">No observed data</option>
+              <option className={selectOptionClassName} value="low_sample">Low sample</option>
+            </AdminReviewSelect>
+            <AdminReviewSelect
+              label="Suggestion"
+              onChange={(value) => {
+                setStrengthFilter(value as typeof strengthFilter);
+                setPage(1);
+              }}
+              value={strengthFilter}
+            >
+              <option className={selectOptionClassName} value="all">All suggestions</option>
+              <option className={selectOptionClassName} value="strong_counter">Strong counter suggestions</option>
+              <option className={selectOptionClassName} value="soft_counter">Soft counter suggestions</option>
+            </AdminReviewSelect>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {counterRankingV2AdminReviewQueueSections.map((section) => {
+          const count = getCounterRankingV2AdminReviewSectionCount(queueRows, section.section);
+          const isActive = queueSection === section.section;
+
+          return (
+            <button
+              className={cn(
+                "rounded-md border p-3 text-left transition",
+                isActive
+                  ? "border-cyan-300/30 bg-cyan-500/10 text-cyan-100"
+                  : "border-white/10 bg-white/[0.03] text-zinc-300 hover:border-cyan-300/25 hover:bg-cyan-500/[0.06]",
+              )}
+              key={section.section}
+              onClick={() => {
+                setQueueSection(section.section);
+                setPage(1);
+              }}
+              type="button"
+            >
+              <span className="block text-sm font-semibold">{section.label}</span>
+              <span className="mt-1 block text-xl font-semibold">{count}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <CounterRankingV2AdminBatchPanel
+        disabled={isBatchSaving}
+        onClearSelection={() => setSelectedRowKeys(new Set())}
+        onBatchReview={runBatchReview}
+        onSelectVisibleRows={() =>
+          setSelectedRowKeys(new Set(visibleRows.map((row) => row.rowKey)))
+        }
+        selectedCount={selectedRows.length}
+        visibleCount={visibleRows.length}
+      />
+
+      <CounterRankingV2AdminPublicPreviewPanel championsById={championsById} rows={previewRows} />
+
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-zinc-400">
+            Showing {paginatedRows.length} of {visibleRows.length} review queue rows
+            {reviewMode === "top_candidates"
+              ? ` in top-${topCandidateCap}-per-target mode.`
+              : "."}
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              disabled={currentPage <= 1}
+              onClick={() => setPage((value) => Math.max(1, value - 1))}
+              type="button"
+              variant="ghost"
+            >
+              Previous
+            </Button>
+            <span className="text-sm text-zinc-500">
+              Page {currentPage} / {totalPages}
+            </span>
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              disabled={currentPage >= totalPages}
+              onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+              type="button"
+              variant="ghost"
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+
+        {reviewStatus.error ? (
+          <p className="rounded-md border border-rose-300/25 bg-rose-500/10 p-3 text-sm text-rose-100">
+            {reviewStatus.error}
+          </p>
+        ) : null}
+        {reviewStatus.success ? (
+          <p className="rounded-md border border-emerald-300/25 bg-emerald-500/10 p-3 text-sm text-emerald-100">
+            {reviewStatus.success}
+          </p>
+        ) : null}
+
+        {paginatedRows.length > 0 ? (
+          paginatedRows.map((row) => (
+            <CounterRankingV2AdminReviewCard
+              championsById={championsById}
+              isSaving={savingReviewKey === row.candidateChampionId || savingReviewKey === "batch"}
+              isSelected={selectedRowKeys.has(row.rowKey)}
+              key={row.rowKey}
+              onSaveReview={onSaveReview}
+              onToggleSelected={() =>
+                setSelectedRowKeys((currentKeys) => {
+                  const nextKeys = new Set(currentKeys);
+
+                  if (nextKeys.has(row.rowKey)) {
+                    nextKeys.delete(row.rowKey);
+                  } else {
+                    nextKeys.add(row.rowKey);
+                  }
+
+                  return nextKeys;
+                })
+              }
+              row={row}
+            />
+          ))
+        ) : (
+          <EmptyState text="No Counter Review rows match the current filters." />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AdminReviewSelect({
+  children,
+  label,
+  onChange,
+  value,
+}: {
+  children: ReactNode;
+  label: string;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  return (
+    <label className="block space-y-2">
+      <span className="text-sm text-zinc-300">{label}</span>
+      <select
+        className={`${fieldClassName} h-10`}
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      >
+        {children}
+      </select>
+    </label>
+  );
+}
+
+function CounterRankingV2AdminReviewSummaryGrid({
+  summary,
+}: {
+  summary: ReturnType<typeof getCounterRankingV2AdminReviewSummary>;
+}) {
+  const summaryItems = [
+    { label: "Total suggestions", value: summary.total },
+    { label: "Unreviewed", value: summary.unreviewed },
+    { label: "Auto approval candidates", value: summary.autoApprovalCandidates },
+    { label: "Auto suggested", value: summary.autoSuggested },
+    { label: "Verified strong", value: summary.verifiedStrong },
+    { label: "Verified soft", value: summary.verifiedSoft },
+    { label: "High mastery", value: summary.highMasteryRequired },
+    { label: "Not a counter", value: summary.notCounters },
+    { label: "Needs more data", value: summary.needsMoreData },
+    { label: "Public eligible", value: summary.publicEligible },
+    { label: "Low sample", value: summary.lowSample },
+    { label: "Unsupported/off-role excluded", value: summary.unsupportedRoleExcluded },
+  ] as const;
+
+  return (
+    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+      {summaryItems.map((item) => (
+        <CounterRankingV2CompactMetric key={item.label} label={item.label} value={item.value} />
+      ))}
+    </div>
+  );
+}
+
+function CounterRankingV2TargetReviewSummaryPanel({
+  summaries,
+}: {
+  summaries: CounterRankingV2TargetReviewSummary[];
+}) {
+  if (summaries.length === 0) {
+    return null;
+  }
+
+  const visibleSummaries = summaries.slice(0, 6);
+
+  return (
+    <div className="rounded-lg border border-white/10 bg-black/15 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm font-semibold text-zinc-100">Per-target review summary</p>
+        <p className="text-xs text-zinc-500">
+          {summaries.length > visibleSummaries.length
+            ? `${visibleSummaries.length} of ${summaries.length} targets shown`
+            : `${summaries.length} target${summaries.length === 1 ? "" : "s"}`}
+        </p>
+      </div>
+      <div className="mt-3 grid gap-2 lg:grid-cols-2">
+        {visibleSummaries.map((summary) => (
+          <div
+            className="rounded-md border border-white/10 bg-white/[0.03] p-3"
+            key={`${summary.targetChampionId}-${summary.label}`}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <p className="text-sm font-semibold text-zinc-100">{summary.label}</p>
+              <Badge className="border-emerald-300/20 bg-emerald-500/10 text-emerald-100">
+                {summary.publicEligible} public
+              </Badge>
+            </div>
+            {summary.publicEligible >= counterRankingV2PublicCounterWarningThreshold ? (
+              <p className="mt-2 rounded-md border border-amber-300/20 bg-amber-500/10 p-2 text-xs leading-5 text-amber-100">
+                {summary.label} already has {summary.publicEligible} public counters. Consider
+                keeping only the clearest recommendations.
+              </p>
+            ) : null}
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <CounterRankingV2CompactMetric label="Strong" value={summary.verifiedStrong} />
+              <CounterRankingV2CompactMetric label="Soft" value={summary.verifiedSoft} />
+              <CounterRankingV2CompactMetric label="Unreviewed" value={summary.remainingUnreviewed} />
+              <CounterRankingV2CompactMetric label="Not counter" value={summary.notCounters} />
+              <CounterRankingV2CompactMetric label="More data" value={summary.needsMoreData} />
+              <CounterRankingV2CompactMetric label="Public" value={summary.publicEligible} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CounterRankingV2AdminBatchPanel({
+  disabled,
+  onClearSelection,
+  onBatchReview,
+  onSelectVisibleRows,
+  selectedCount,
+  visibleCount,
+}: {
+  disabled: boolean;
+  onClearSelection: () => void;
+  onBatchReview: (input: {
+    publicEligible?: boolean;
+    reviewStatus?: CounterRankingV2AdminBatchReviewStatus;
+  }) => void;
+  onSelectVisibleRows: () => void;
+  selectedCount: number;
+  visibleCount: number;
+}) {
+  const hasSelection = selectedCount > 0;
+
+  return (
+    <div className="rounded-lg border border-white/10 bg-black/15 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-zinc-100">Batch review actions</p>
+          <p className="mt-1 text-xs text-zinc-500">{selectedCount} selected</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+            disabled={visibleCount === 0 || disabled}
+            onClick={onSelectVisibleRows}
+            type="button"
+            variant="ghost"
+          >
+            Select visible candidates
+          </Button>
+          <Button
+            className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+            disabled={!hasSelection || disabled}
+            onClick={onClearSelection}
+            type="button"
+            variant="ghost"
+          >
+            Clear selection
+          </Button>
+          {counterRankingV2AdminBatchReviewStatuses.map((status) => (
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              disabled={!hasSelection || disabled}
+              key={status}
+              onClick={() => onBatchReview({ reviewStatus: status })}
+              type="button"
+              variant="ghost"
+            >
+              {formatCounterRankingV2ReviewStatus(status)}
+            </Button>
+          ))}
+          <Button
+            className="border-emerald-300/20 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+            disabled={!hasSelection || disabled}
+            onClick={() => onBatchReview({ publicEligible: true })}
+            type="button"
+            variant="ghost"
+          >
+            Enable public eligible
+          </Button>
+          <Button
+            className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+            disabled={!hasSelection || disabled}
+            onClick={() => onBatchReview({ publicEligible: false })}
+            type="button"
+            variant="ghost"
+          >
+            Disable public eligible
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CounterRankingV2AdminPublicPreviewPanel({
+  championsById,
+  rows,
+}: {
+  championsById: Map<string, AdminLeagueChampion>;
+  rows: CounterRankingV2AdminReviewRow[];
+}) {
+  const approvedRows = rows.filter((row) => isCounterRankingV2ReviewPublicEligible(row.review));
+  const bestCounterRows = approvedRows.filter(
+    (row) =>
+      row.review?.reviewStatus === "verified_strong_counter" ||
+      row.review?.reviewStatus === "verified_soft_counter",
+  );
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <div className="rounded-lg border border-emerald-300/15 bg-emerald-500/[0.05] p-3">
+        <p className="text-sm font-semibold text-emerald-100">Public preview: Best Counters</p>
+        <CounterRankingV2AdminPreviewList
+          championsById={championsById}
+          rows={bestCounterRows}
+          variant="best"
+        />
+      </div>
+      <div className="rounded-lg border border-cyan-300/15 bg-cyan-500/[0.05] p-3">
+        <p className="text-sm font-semibold text-cyan-100">Public preview: Bad Into inverse</p>
+        <CounterRankingV2AdminPreviewList
+          championsById={championsById}
+          rows={bestCounterRows}
+          variant="inverse"
+        />
+      </div>
+    </div>
+  );
+}
+
+function CounterRankingV2AdminPreviewList({
+  championsById,
+  rows,
+  variant,
+}: {
+  championsById: Map<string, AdminLeagueChampion>;
+  rows: CounterRankingV2AdminReviewRow[];
+  variant: "best" | "inverse";
+}) {
+  if (rows.length === 0) {
+    return (
+      <p className="mt-3 rounded-md border border-white/10 bg-black/15 p-3 text-sm text-zinc-500">
+        No selected or visible rows are eligible for this public preview.
+      </p>
+    );
+  }
+
+  return (
+    <ul className="mt-3 space-y-2">
+      {rows.slice(0, 8).map((row) => {
+        const target = championsById.get(normalizeCounterRankingV2ChampionId(row.targetChampionId));
+        const candidate = championsById.get(normalizeCounterRankingV2ChampionId(row.candidateChampionId));
+        const listedChampion = variant === "best" ? candidate : target;
+        const contextChampion = variant === "best" ? target : candidate;
+
+        return (
+          <li className="rounded-md border border-white/10 bg-black/15 p-3" key={`${variant}-${row.rowKey}`}>
+            <p className="text-sm font-semibold text-zinc-100">
+              {listedChampion?.name ?? listedChampion?.id ?? "Unknown"}{" "}
+              {variant === "best" ? "as Best Counter into" : "in Bad Into for"}{" "}
+              {contextChampion?.name ?? contextChampion?.id ?? "Unknown"} {getRoleLabel(row.mechanicalResult.role ?? "mid")}
+            </p>
+            <p className="mt-1 text-xs text-zinc-500">
+              {formatCounterRankingV2ReviewStatus(row.review?.reviewStatus ?? "unreviewed")} · public-safe preview
+            </p>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function CounterRankingV2AdminReviewCard({
+  championsById,
+  isSaving,
+  isSelected,
+  onSaveReview,
+  onToggleSelected,
+  row,
+}: {
+  championsById: Map<string, AdminLeagueChampion>;
+  isSaving: boolean;
+  isSelected: boolean;
+  onSaveReview: (row: CounterRankingV2ComparisonRow, form: CounterRankingV2ReviewForm) => void;
+  onToggleSelected: () => void;
+  row: CounterRankingV2AdminReviewRow;
+}) {
+  const [form, setForm] = useState<CounterRankingV2ReviewForm>(() =>
+    getCounterRankingV2ReviewForm(row.review),
+  );
+  const target = championsById.get(normalizeCounterRankingV2ChampionId(row.targetChampionId));
+  const candidate = championsById.get(normalizeCounterRankingV2ChampionId(row.candidateChampionId));
+  const observedGames = row.observed?.games ?? 0;
+  const isLowSample = observedGames > 0 && observedGames < publicCounterPickMinimumRankedGames;
+  const isPublicAllowed =
+    form.reviewStatus === "verified_strong_counter" ||
+    form.reviewStatus === "verified_soft_counter";
+  const isPublicEligibleChecked = isPublicAllowed && form.publicEligible;
+  const reasons = row.automationSuggestion?.blockers.length
+    ? row.automationSuggestion.blockers.map((blocker) => blocker.message)
+    : (row.automationSuggestion?.reasons ?? []);
+  const mechanicalReasons = getCounterRankingV2MechanicalReasons(row.mechanicalResult.factors, 1);
+  const priorityScore = Math.round(getCounterRankingV2AdminReviewPriorityScore(row));
+
+  function saveWithStatus(reviewStatus: CounterRankingV2ReviewStatus) {
+    const nextForm = {
+      ...form,
+      publicEligible:
+        reviewStatus === "verified_strong_counter" || reviewStatus === "verified_soft_counter"
+          ? form.publicEligible
+          : false,
+      reviewStatus,
+    };
+
+    setForm(nextForm);
+    onSaveReview(row, nextForm);
+  }
+
+  function saveWithFormPatch(patch: Partial<CounterRankingV2ReviewForm>) {
+    const nextForm = {
+      ...form,
+      ...patch,
+    };
+
+    setForm(nextForm);
+    onSaveReview(row, {
+      ...nextForm,
+      publicEligible:
+        nextForm.reviewStatus === "verified_strong_counter" ||
+        nextForm.reviewStatus === "verified_soft_counter"
+          ? nextForm.publicEligible
+          : false,
+    });
+  }
+
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <label className="flex items-center gap-3 text-sm text-zinc-300">
+          <input
+            checked={isSelected}
+            className="size-4 accent-cyan-300"
+            onChange={onToggleSelected}
+            type="checkbox"
+          />
+          Select
+        </label>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-white">
+            {candidate?.name ?? row.candidateChampionId} into {target?.name ?? row.targetChampionId} ·{" "}
+            {getRoleLabel(row.mechanicalResult.role ?? "mid")}
+          </p>
+          <p className="mt-1 text-xs text-zinc-500">
+            Target profile: {row.targetProfile ? `${formatProfileStatus(row.targetProfile.reviewStatus)} v${row.targetProfile.version}` : "Missing"} · Candidate profile:{" "}
+            {row.candidateProfile ? `${formatProfileStatus(row.candidateProfile.reviewStatus)} v${row.candidateProfile.version}` : "Missing"}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge className="border-sky-300/20 bg-sky-500/10 text-sky-100">
+            {row.automationSuggestion ? formatCounterRankingV2AutomationStatus(row.automationSuggestion.automationStatus) : "No automation"}
+          </Badge>
+          <Badge className="border-white/10 bg-white/5 text-zinc-300">
+            {formatCounterRankingV2ReviewStatus(row.review?.reviewStatus ?? "unreviewed")}
+          </Badge>
+          {isCounterRankingV2ReviewPublicEligible(row.review) ? (
+            <Badge className="border-emerald-300/20 bg-emerald-500/10 text-emerald-100">Public eligible</Badge>
+          ) : null}
+          {row.review?.highMasteryRequired ? (
+            <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">
+              High Mastery
+            </Badge>
+          ) : null}
+          {isLowSample ? (
+            <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">Low sample</Badge>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+        <CounterRankingV2Metric label="Mechanical score" value={String(row.mechanicalResult.score)} />
+        <CounterRankingV2Metric label="Final reviewed" value={formatNullableNumber(row.review?.finalMechanicalScore)} />
+        <CounterRankingV2Metric label="Observed rank" value={row.observed?.rank ? `#${row.observed.rank}` : "None"} />
+        <CounterRankingV2Metric label="Games" value={formatNullableNumber(row.observed?.games)} />
+        <CounterRankingV2Metric label="Confidence" value={row.observed?.confidence.shortLabel ?? "No data"} />
+        <CounterRankingV2Metric label="Mismatch" value={row.rankDelta === null ? "None" : formatRankDelta(row.rankDelta)} />
+        <CounterRankingV2Metric label="Priority" value={String(priorityScore)} />
+      </div>
+
+      {reasons.length > 0 || mechanicalReasons.length > 0 ? (
+        <div className="mt-3 rounded-md border border-white/10 bg-black/15 p-3">
+          {mechanicalReasons.at(0) ? (
+            <p className="text-sm text-zinc-300">{mechanicalReasons[0].explanation}</p>
+          ) : null}
+          {reasons.slice(0, 2).map((reason) => (
+            <p className="mt-1 text-xs text-zinc-500" key={reason}>{reason}</p>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        {counterRankingV2ReviewStatuses
+          .filter((status) => status !== "unreviewed")
+          .map((status) => (
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              disabled={isSaving}
+              key={status}
+              onClick={() => saveWithStatus(status)}
+              type="button"
+              variant="ghost"
+            >
+              {formatCounterRankingV2ReviewStatus(status)}
+            </Button>
+          ))}
+        <Button
+          className="border-amber-300/20 bg-amber-500/10 text-amber-100 hover:bg-amber-500/20"
+          disabled={isSaving}
+          onClick={() => saveWithFormPatch({ highMasteryRequired: !form.highMasteryRequired })}
+          type="button"
+          variant="ghost"
+        >
+          {form.highMasteryRequired ? "Clear high mastery" : "High mastery"}
+        </Button>
+        <Button
+          className="border-emerald-300/20 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+          disabled={isSaving || !isPublicAllowed}
+          onClick={() => saveWithFormPatch({ publicEligible: !isPublicEligibleChecked })}
+          type="button"
+          variant="ghost"
+        >
+          {isPublicEligibleChecked ? "Clear public eligible" : "Public eligible"}
+        </Button>
+      </div>
+
+      <form
+        className="mt-4 grid gap-3 lg:grid-cols-[0.5fr_1fr_auto_auto]"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSaveReview(row, {
+            ...form,
+            publicEligible: isPublicAllowed && form.publicEligible,
+          });
+        }}
+      >
+        <Input
+          className="h-10 border-white/10 bg-white/5 text-zinc-100"
+          disabled={isSaving}
+          max={30}
+          min={-30}
+          onChange={(event) => setForm((currentForm) => ({ ...currentForm, manualAdjustment: event.target.value }))}
+          type="number"
+          value={form.manualAdjustment}
+        />
+        <Input
+          className="h-10 border-white/10 bg-white/5 text-zinc-100"
+          disabled={isSaving}
+          onChange={(event) => setForm((currentForm) => ({ ...currentForm, adminReviewNote: event.target.value }))}
+          placeholder="Admin note"
+          value={form.adminReviewNote}
+        />
+        <label className="flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-300">
+          <input
+            checked={isPublicEligibleChecked}
+            className="size-4 accent-cyan-300"
+            disabled={isSaving || !isPublicAllowed}
+            onChange={(event) => setForm((currentForm) => ({ ...currentForm, publicEligible: event.target.checked }))}
+            type="checkbox"
+          />
+          Public eligible
+        </label>
+        <label className="flex items-center gap-2 rounded-md border border-amber-300/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+          <input
+            checked={form.highMasteryRequired}
+            className="size-4 accent-amber-300"
+            disabled={isSaving}
+            onChange={(event) =>
+              setForm((currentForm) => ({
+                ...currentForm,
+                highMasteryRequired: event.target.checked,
+              }))
+            }
+            type="checkbox"
+          />
+          High mastery required
+        </label>
+        <div className="lg:col-span-4">
+          <Button
+            className="border-cyan-300/20 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/20"
+            disabled={isSaving}
+            type="submit"
+            variant="ghost"
+          >
+            <Save className="size-4" aria-hidden="true" />
+            Save note / adjustment
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function CounterRankingV2ShadowPanel({
   championsById,
   enemyChampionId,
@@ -3613,6 +5009,7 @@ function CounterRankingV2ReviewProgressSummaryPanel({
     { label: "Unreviewed counter candidates", value: summary.unreviewed },
     { label: "Verified strong counters", value: summary.verifiedStrongCounters },
     { label: "Verified soft counters", value: summary.verifiedSoftCounters },
+    { label: "High mastery", value: summary.highMasteryRequired },
     { label: "Not counters", value: summary.notCounters },
     { label: "Needs more data", value: summary.needsMoreData },
     { label: "Incorrect suggestions", value: summary.incorrectSuggestions },
@@ -3964,6 +5361,11 @@ function CounterRankingV2PublicPreviewPanel({
                       Low sample mechanical counter
                     </Badge>
                   ) : null}
+                  {previewRow.highMasteryRequired ? (
+                    <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">
+                      High Mastery
+                    </Badge>
+                  ) : null}
                 </div>
 
                 <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -4230,6 +5632,11 @@ function CounterRankingV2ShadowRow({
               Internal review only
             </Badge>
           )}
+          {row.review?.highMasteryRequired ? (
+            <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">
+              High Mastery
+            </Badge>
+          ) : null}
           {isLowSampleDesignCounter ? (
             <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">
               Low sample mechanical counter
@@ -4416,6 +5823,29 @@ function CounterRankingV2ShadowRow({
               </span>
             </label>
 
+            <label className="flex items-center gap-3 rounded-md border border-amber-300/20 bg-amber-500/10 p-3">
+              <input
+                checked={reviewForm.highMasteryRequired}
+                className="size-4 accent-amber-300"
+                disabled={!hasCalculatedScore || isSavingReview}
+                onChange={(event) =>
+                  setReviewForm((currentForm) => ({
+                    ...currentForm,
+                    highMasteryRequired: event.target.checked,
+                  }))
+                }
+                type="checkbox"
+              />
+              <span>
+                <span className="block text-sm font-semibold text-amber-100">
+                  High mastery required
+                </span>
+                <span className="block text-xs leading-5 text-amber-200/70">
+                  Modifier only. Public exposure still requires strong or soft counter approval.
+                </span>
+              </span>
+            </label>
+
             {isPublicEligibleChecked && hasLowObservedSample ? (
               <p className="rounded-md border border-amber-300/20 bg-amber-500/10 p-3 text-sm text-amber-100 lg:col-span-2">
                 This will be treated as a low-sample mechanical counter.
@@ -4526,6 +5956,7 @@ function getCounterRankingV2ReviewForm(
   return {
     adjustmentReason: review?.adjustmentReason ?? counterRankingV2DefaultAdjustmentReason,
     adminReviewNote: review?.adminReviewNote ?? "",
+    highMasteryRequired: review?.highMasteryRequired ?? false,
     manualAdjustment: String(review?.manualAdjustment ?? 0),
     publicEligible: review?.publicEligible ?? false,
     reviewStatus: review?.reviewStatus ?? counterRankingV2DefaultReviewStatus,
@@ -5438,6 +6869,402 @@ function getProfileRowUpdatedAtTimestamp(row: CounterRankingV2ProfileReviewPanel
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
+function getCounterRankingV2ReviewRowKey({
+  candidateChampionId,
+  role,
+  targetChampionId,
+}: {
+  candidateChampionId: string;
+  role: LeagueRole;
+  targetChampionId: string;
+}) {
+  return `${normalizeCounterRankingV2ChampionId(targetChampionId)}::${normalizeCounterRankingV2ChampionId(candidateChampionId)}::${role}`;
+}
+
+function getCounterRankingV2AdminReviewSummary(
+  rows: CounterRankingV2AdminReviewRow[],
+  unsupportedRoleExcluded: number,
+) {
+  return rows.reduce(
+    (summary, row) => {
+      const reviewStatus = row.review?.reviewStatus ?? "unreviewed";
+      const automationStatus = row.automationSuggestion?.automationStatus ?? null;
+      const observedGames = row.observed?.games ?? 0;
+
+      return {
+        autoApprovalCandidates:
+          summary.autoApprovalCandidates +
+          (automationStatus === "auto_approval_candidate" ? 1 : 0),
+        autoSuggested: summary.autoSuggested + (automationStatus === "auto_suggested" ? 1 : 0),
+        highMasteryRequired:
+          summary.highMasteryRequired + (row.review?.highMasteryRequired ? 1 : 0),
+        lowSample:
+          summary.lowSample +
+          (observedGames > 0 && observedGames < publicCounterPickMinimumRankedGames ? 1 : 0),
+        needsMoreData: summary.needsMoreData + (reviewStatus === "needs_more_data" ? 1 : 0),
+        notCounters: summary.notCounters + (reviewStatus === "not_a_counter" ? 1 : 0),
+        publicEligible:
+          summary.publicEligible + (isCounterRankingV2ReviewPublicEligible(row.review) ? 1 : 0),
+        total: summary.total + 1,
+        unreviewed:
+          summary.unreviewed + (row.review === null || reviewStatus === "unreviewed" ? 1 : 0),
+        unsupportedRoleExcluded: summary.unsupportedRoleExcluded,
+        verifiedSoft: summary.verifiedSoft + (reviewStatus === "verified_soft_counter" ? 1 : 0),
+        verifiedStrong:
+          summary.verifiedStrong + (reviewStatus === "verified_strong_counter" ? 1 : 0),
+      };
+    },
+    {
+      autoApprovalCandidates: 0,
+      autoSuggested: 0,
+      highMasteryRequired: 0,
+      lowSample: 0,
+      needsMoreData: 0,
+      notCounters: 0,
+      publicEligible: 0,
+      total: 0,
+      unreviewed: 0,
+      unsupportedRoleExcluded,
+      verifiedSoft: 0,
+      verifiedStrong: 0,
+    },
+  );
+}
+
+function getCounterRankingV2AdminReviewSectionCount(
+  rows: CounterRankingV2AdminReviewRow[],
+  section: CounterRankingV2AdminReviewQueueSection,
+) {
+  return rows.filter((row) => isCounterRankingV2AdminReviewRowInSection(row, section)).length;
+}
+
+function getCounterRankingV2TopCandidateRowsPerTarget({
+  rows,
+  topCandidateCap,
+}: {
+  rows: CounterRankingV2AdminReviewRow[];
+  topCandidateCap: number;
+}) {
+  const rowsByTarget = new Map<string, CounterRankingV2AdminReviewRow[]>();
+
+  for (const row of rows) {
+    if (!isCounterRankingV2AdminTopCandidate(row)) {
+      continue;
+    }
+
+    const targetKey = normalizeCounterRankingV2ChampionId(row.targetChampionId);
+    const targetRows = rowsByTarget.get(targetKey) ?? [];
+
+    targetRows.push(row);
+    rowsByTarget.set(targetKey, targetRows);
+  }
+
+  return Array.from(rowsByTarget.values()).flatMap((targetRows) =>
+    sortCounterRankingV2AdminReviewRows(targetRows, "review_priority", new Map()).slice(
+      0,
+      topCandidateCap,
+    ),
+  );
+}
+
+function isCounterRankingV2AdminTopCandidate(row: CounterRankingV2AdminReviewRow) {
+  const reviewStatus = row.review?.reviewStatus ?? "unreviewed";
+
+  return (
+    (row.review === null || reviewStatus === "unreviewed") &&
+    row.mechanicalResult.status === "calculated" &&
+    row.targetProfile?.reviewStatus === "reviewed" &&
+    row.candidateProfile?.reviewStatus === "reviewed" &&
+    !row.unsupportedRole
+  );
+}
+
+function isCounterRankingV2AdminReviewRowVisible({
+  automationFilter,
+  candidateQuery,
+  dataFilter,
+  publicFilter,
+  queueSection,
+  reviewFilter,
+  row,
+  strengthFilter,
+}: {
+  automationFilter: CounterRankingV2AutomationStatus | "all";
+  candidateQuery: string;
+  dataFilter: "all" | "has_observed" | "low_sample" | "no_observed";
+  publicFilter: "all" | "not_public" | "public_eligible";
+  queueSection: CounterRankingV2AdminReviewQueueSection;
+  reviewFilter: CounterRankingV2ReviewFilter | "reviewed_only";
+  row: CounterRankingV2AdminReviewRow;
+  strengthFilter: "all" | "soft_counter" | "strong_counter";
+}) {
+  const query = candidateQuery.trim().toLowerCase();
+  const observedGames = row.observed?.games ?? 0;
+  const reviewStatus = row.review?.reviewStatus ?? "unreviewed";
+  const isPublicEligible = isCounterRankingV2ReviewPublicEligible(row.review);
+
+  if (!isCounterRankingV2AdminReviewRowInSection(row, queueSection)) {
+    return false;
+  }
+
+  if (
+    query &&
+    !row.candidateChampionId.toLowerCase().includes(query) &&
+    !row.targetChampionId.toLowerCase().includes(query)
+  ) {
+    return false;
+  }
+
+  if (reviewFilter === "reviewed_only" && (row.review === null || reviewStatus === "unreviewed")) {
+    return false;
+  }
+
+  if (
+    reviewFilter !== "all" &&
+    reviewFilter !== "reviewed_only" &&
+    !isCounterRankingV2RowMatchingReviewFilter({
+      filter: reviewFilter,
+      minimumGames: publicCounterPickMinimumRankedGames,
+      row,
+    })
+  ) {
+    return false;
+  }
+
+  if (automationFilter !== "all" && row.automationSuggestion?.automationStatus !== automationFilter) {
+    return false;
+  }
+
+  if (publicFilter === "public_eligible" && !isPublicEligible) {
+    return false;
+  }
+
+  if (publicFilter === "not_public" && isPublicEligible) {
+    return false;
+  }
+
+  if (dataFilter === "has_observed" && observedGames <= 0) {
+    return false;
+  }
+
+  if (dataFilter === "no_observed" && observedGames > 0) {
+    return false;
+  }
+
+  if (
+    dataFilter === "low_sample" &&
+    !(observedGames > 0 && observedGames < publicCounterPickMinimumRankedGames)
+  ) {
+    return false;
+  }
+
+  if (strengthFilter === "strong_counter") {
+    return (
+      row.automationSuggestion?.suggestedStrength === "strong_counter" ||
+      row.automationSuggestion?.suggestedStrength === "hard_counter"
+    );
+  }
+
+  if (strengthFilter === "soft_counter") {
+    return row.automationSuggestion?.suggestedStrength === "soft_counter";
+  }
+
+  return true;
+}
+
+function isCounterRankingV2AdminReviewRowInSection(
+  row: CounterRankingV2AdminReviewRow,
+  section: CounterRankingV2AdminReviewQueueSection,
+) {
+  const reviewStatus = row.review?.reviewStatus ?? "unreviewed";
+  const observedGames = row.observed?.games ?? 0;
+
+  switch (section) {
+    case "all":
+      return true;
+    case "auto_approval_candidate":
+      return row.automationSuggestion?.automationStatus === "auto_approval_candidate";
+    case "auto_suggested":
+      return row.automationSuggestion?.automationStatus === "auto_suggested";
+    case "needs_review":
+      return row.automationSuggestion?.automationStatus === "needs_review";
+    case "low_sample":
+      return observedGames > 0 && observedGames < publicCounterPickMinimumRankedGames;
+    case "public_eligible":
+      return isCounterRankingV2ReviewPublicEligible(row.review);
+    case "rejected":
+      return reviewStatus === "incorrect_suggestion" || reviewStatus === "not_a_counter";
+    case "needs_more_data":
+      return reviewStatus === "needs_more_data";
+  }
+}
+
+function sortCounterRankingV2AdminReviewRows(
+  rows: CounterRankingV2AdminReviewRow[],
+  sortMode: CounterRankingV2AdminReviewSort,
+  championsById: Map<string, AdminLeagueChampion>,
+) {
+  if (sortMode === "review_priority") {
+    return [...rows].sort(compareCounterRankingV2AdminReviewPriorityRows);
+  }
+
+  return [...rows].sort((left, right) => {
+    switch (sortMode) {
+      case "highest_mechanical_score":
+        return right.mechanicalResult.score - left.mechanicalResult.score;
+      case "lowest_observed_rank_mismatch":
+        return Math.abs(left.rankDelta ?? 999) - Math.abs(right.rankDelta ?? 999);
+      case "most_games":
+        return (right.observed?.games ?? 0) - (left.observed?.games ?? 0);
+      case "lowest_sample_first":
+        return (left.observed?.games ?? 0) - (right.observed?.games ?? 0);
+      case "newest_review_update":
+        return getCounterRankingV2ReviewUpdatedTimestamp(right) - getCounterRankingV2ReviewUpdatedTimestamp(left);
+      case "champion_name":
+      case "candidate_champion":
+        return getAdminReviewChampionName(left.candidateChampionId, championsById).localeCompare(
+          getAdminReviewChampionName(right.candidateChampionId, championsById),
+        );
+      case "target_champion":
+        return getAdminReviewChampionName(left.targetChampionId, championsById).localeCompare(
+          getAdminReviewChampionName(right.targetChampionId, championsById),
+        );
+    }
+  });
+}
+
+function compareCounterRankingV2AdminReviewPriorityRows(
+  left: CounterRankingV2AdminReviewRow,
+  right: CounterRankingV2AdminReviewRow,
+) {
+  const leftScore = getCounterRankingV2AdminReviewPriorityScore(left);
+  const rightScore = getCounterRankingV2AdminReviewPriorityScore(right);
+
+  if (leftScore !== rightScore) {
+    return rightScore - leftScore;
+  }
+
+  return sortCounterRankingV2RowsByReviewPriority([left, right])[0] === left ? -1 : 1;
+}
+
+function getCounterRankingV2AdminReviewPriorityScore(row: CounterRankingV2AdminReviewRow) {
+  const reviewStatus = row.review?.reviewStatus ?? "unreviewed";
+  const mechanicalScore =
+    row.review?.finalMechanicalScore ??
+    (row.mechanicalResult.status === "calculated" ? row.mechanicalResult.score : 0);
+  const observedGames = row.observed?.games ?? 0;
+  let priorityScore = mechanicalScore;
+
+  if (reviewStatus === "unreviewed" || row.review === null) {
+    priorityScore += 160;
+  } else if (reviewStatus === "verified_strong_counter" || reviewStatus === "verified_soft_counter") {
+    priorityScore += 20;
+  } else if (reviewStatus === "not_a_counter" || reviewStatus === "incorrect_suggestion") {
+    priorityScore -= 250;
+  } else {
+    priorityScore -= 80;
+  }
+
+  if (row.targetProfile?.reviewStatus === "reviewed") {
+    priorityScore += 40;
+  } else if (!row.targetProfile) {
+    priorityScore -= 200;
+  }
+
+  if (row.candidateProfile?.reviewStatus === "reviewed") {
+    priorityScore += 40;
+  } else if (!row.candidateProfile) {
+    priorityScore -= 200;
+  }
+
+  if (!row.unsupportedRole) {
+    priorityScore += 50;
+  } else {
+    priorityScore -= 500;
+  }
+
+  if (observedGames > 0) {
+    priorityScore += 25 + Math.min(50, Math.log10(observedGames + 1) * 20);
+  }
+
+  if (row.rankDelta !== null && row.rankDelta > 0) {
+    priorityScore += Math.min(35, row.rankDelta);
+  }
+
+  return priorityScore;
+}
+
+function getCounterRankingV2TargetReviewSummaries({
+  championsById,
+  role,
+  rows,
+}: {
+  championsById: Map<string, AdminLeagueChampion>;
+  role: LeagueRole;
+  rows: CounterRankingV2AdminReviewRow[];
+}): CounterRankingV2TargetReviewSummary[] {
+  const summariesByTarget = new Map<string, CounterRankingV2TargetReviewSummary>();
+
+  for (const row of rows) {
+    const targetKey = normalizeCounterRankingV2ChampionId(row.targetChampionId);
+    const champion = championsById.get(targetKey);
+    const currentSummary =
+      summariesByTarget.get(targetKey) ??
+      {
+        label: `${champion?.name ?? row.targetChampionId} ${getRoleLabel(role)}`,
+        needsMoreData: 0,
+        notCounters: 0,
+        publicEligible: 0,
+        remainingUnreviewed: 0,
+        targetChampionId: row.targetChampionId,
+        verifiedSoft: 0,
+        verifiedStrong: 0,
+      };
+    const reviewStatus = row.review?.reviewStatus ?? "unreviewed";
+
+    summariesByTarget.set(targetKey, {
+      ...currentSummary,
+      needsMoreData:
+        currentSummary.needsMoreData + (reviewStatus === "needs_more_data" ? 1 : 0),
+      notCounters: currentSummary.notCounters + (reviewStatus === "not_a_counter" ? 1 : 0),
+      publicEligible:
+        currentSummary.publicEligible + (isCounterRankingV2ReviewPublicEligible(row.review) ? 1 : 0),
+      remainingUnreviewed:
+        currentSummary.remainingUnreviewed +
+        (row.review === null || reviewStatus === "unreviewed" ? 1 : 0),
+      verifiedSoft:
+        currentSummary.verifiedSoft + (reviewStatus === "verified_soft_counter" ? 1 : 0),
+      verifiedStrong:
+        currentSummary.verifiedStrong + (reviewStatus === "verified_strong_counter" ? 1 : 0),
+    });
+  }
+
+  return Array.from(summariesByTarget.values()).sort((left, right) => {
+    if (left.publicEligible !== right.publicEligible) {
+      return right.publicEligible - left.publicEligible;
+    }
+
+    if (left.remainingUnreviewed !== right.remainingUnreviewed) {
+      return right.remainingUnreviewed - left.remainingUnreviewed;
+    }
+
+    return left.label.localeCompare(right.label);
+  });
+}
+
+function getCounterRankingV2ReviewUpdatedTimestamp(row: CounterRankingV2AdminReviewRow) {
+  const timestamp = row.review?.updatedAt ? new Date(row.review.updatedAt).getTime() : 0;
+
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function getAdminReviewChampionName(
+  championId: string,
+  championsById: Map<string, AdminLeagueChampion>,
+) {
+  return championsById.get(normalizeCounterRankingV2ChampionId(championId))?.name ?? championId;
+}
+
 function getCounterRankingV2ProfileCoverageSummary(
   profiles: CounterRankingV2ChampionProfile[],
   activeChampionCount: number,
@@ -5593,8 +7420,6 @@ function formatCounterRankingV2ReviewStatus(status: CounterRankingV2ReviewStatus
       return "Not a counter";
     case "incorrect_suggestion":
       return "Incorrect suggestion";
-    case "high_mastery_required":
-      return "High mastery required";
     case "needs_more_data":
       return "Needs more data";
   }

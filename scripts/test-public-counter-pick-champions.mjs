@@ -285,6 +285,7 @@ async function testPublicCounterPickDirectionMapping() {
         reviewedMechanicalCounter({
           counterChampionId: "Annie",
           enemyChampionId: "Ahri",
+          highMasteryRequired: true,
           publicEligible: true,
           reviewStatus: "verified_soft_counter",
         }),
@@ -327,8 +328,9 @@ async function testPublicCounterPickDirectionMapping() {
         reviewedMechanicalCounter({
           counterChampionId: "Akali",
           enemyChampionId: "Ahri",
+          highMasteryRequired: true,
           publicEligible: true,
-          reviewStatus: "high_mastery_required",
+          reviewStatus: "needs_more_data",
         }),
         reviewedMechanicalCounter({
           counterChampionId: "Syndra",
@@ -368,6 +370,7 @@ async function testPublicCounterPickDirectionMapping() {
     true,
   );
   assert.equal(hasPublicCounterResultLabel(enabledAnnie.statistics, "design_counter"), true);
+  assert.equal(hasPublicCounterResultLabel(enabledAnnie.statistics, "high_mastery"), true);
   assert.equal(hasPublicCounterResultLabel(enabledAnnie.statistics, "low_sample"), true);
   assert.equal(hasPublicCounterResultLabel(enabledTalon.statistics, "low_sample"), true);
   assert.equal(enabledVex.games, 4);
@@ -481,6 +484,7 @@ async function testPublicCounterPickDirectionMapping() {
       reviewedMechanicalCounter({
         counterChampionId: "Orianna",
         enemyChampionId: "Mel",
+        highMasteryRequired: true,
         publicEligible: true,
         reviewStatus: "needs_more_data",
       }),
@@ -533,7 +537,11 @@ async function testPublicCounterPickDirectionMapping() {
   );
   assert.deepEqual(nonPublicSoftBuckets.countersIntoSelectedChampion, []);
   assert.deepEqual(incorrectSuggestionBuckets.countersIntoSelectedChampion, []);
-  assert.deepEqual(needsMoreDataBuckets.countersIntoSelectedChampion, []);
+  assert.deepEqual(
+    needsMoreDataBuckets.countersIntoSelectedChampion,
+    [],
+    "High-mastery needs-more-data rows should not render as public counters.",
+  );
   assert.deepEqual(
     notCounterBuckets.countersIntoSelectedChampion,
     [],
@@ -851,6 +859,7 @@ function storedStat({
 function reviewedMechanicalCounter({
   counterChampionId,
   enemyChampionId,
+  highMasteryRequired = false,
   publicEligible,
   reviewStatus,
 }) {
@@ -859,6 +868,7 @@ function reviewedMechanicalCounter({
     counterChampionId,
     enemyChampionId,
     finalReviewedScore: 99,
+    highMasteryRequired,
     manualAdjustment: 10,
     publicEligible,
     reviewStatus,

@@ -202,6 +202,7 @@ const counterRankingV2MechanicalReviewSelect = [
   "final_mechanical_score",
   "generated_at",
   "generated_by",
+  "high_mastery_required",
   "manual_adjustment",
   "public_eligible",
   "review_status",
@@ -346,9 +347,10 @@ type CounterRankingV2MechanicalReviewRow = {
   final_mechanical_score: number;
   generated_at: string | null;
   generated_by: string | null;
+  high_mastery_required: boolean | null;
   manual_adjustment: number;
   public_eligible: boolean;
-  review_status: CounterRankingV2ReviewStatus;
+  review_status: CounterRankingV2ReviewStatus | "high_mastery_required";
   reviewed_at: string | null;
   reviewed_by: string | null;
   role: LeagueRole;
@@ -526,6 +528,7 @@ export type SaveCounterRankingV2MechanicalReviewInput = {
   adminReviewNote: string | null;
   counterChampionId: string;
   enemyChampionId: string;
+  highMasteryRequired?: boolean;
   manualAdjustment: number;
   publicEligible: boolean;
   reviewStatus: CounterRankingV2ReviewStatus;
@@ -1418,6 +1421,67 @@ export async function getCounterRankingV2MechanicalReviews({
   };
 }
 
+export async function getCounterRankingV2AllMechanicalReviews({
+  accessToken,
+}: {
+  accessToken: string;
+}): Promise<CounterRankingV2MechanicalReviewsResult> {
+  const authResult = await getAuthorizedAdmin(
+    accessToken,
+    "view Counter Ranking V2 review queue",
+  );
+
+  if (!authResult.ok) {
+    return authResult;
+  }
+
+  const serviceClientResult = getServiceSupabaseClient();
+
+  if (!serviceClientResult.ok) {
+    return serviceClientResult;
+  }
+
+  const reviews: CounterRankingV2MechanicalReviewRow[] = [];
+  const pageSize = 1_000;
+
+  for (let page = 0; ; page += 1) {
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+    const { data, error } = await serviceClientResult.supabase
+      .from("counter_ranking_v2_mechanical_reviews")
+      .select(counterRankingV2MechanicalReviewSelect)
+      .order("updated_at", { ascending: false })
+      .range(from, to)
+      .returns<CounterRankingV2MechanicalReviewRow[]>();
+
+    if (error) {
+      console.error("Counter Ranking V2 review queue load failed", {
+        error: getSafeDatabaseError(error),
+        page,
+        table: "counter_ranking_v2_mechanical_reviews",
+      });
+
+      return {
+        error: "Counter Ranking V2 review queue could not be loaded.",
+        ok: false,
+      };
+    }
+
+    const pageRows = data ?? [];
+
+    reviews.push(...pageRows);
+
+    if (pageRows.length < pageSize) {
+      break;
+    }
+  }
+
+  return {
+    ok: true,
+    reviews: reviews.map(toCounterRankingV2MechanicalReview),
+  };
+}
+
 export async function saveCounterRankingV2ProfileReview(
   input: SaveCounterRankingV2ProfileReviewInput,
 ): Promise<SaveCounterRankingV2ProfileReviewResult> {
@@ -1954,6 +2018,7 @@ export async function saveCounterRankingV2MechanicalReview(
         calculated_mechanical_score: mechanicalResult.score,
         counter_champion_id: resolvedChampionIds.counterChampionId,
         enemy_champion_id: resolvedChampionIds.enemyChampionId,
+        high_mastery_required: validation.highMasteryRequired,
         manual_adjustment: validation.manualAdjustment,
         public_eligible: validation.publicEligible,
         review_status: validation.reviewStatus,
@@ -2091,6 +2156,7 @@ export async function batchSaveCounterRankingV2MechanicalReviews(
       enemy_champion_id: resolvedChampionIds.enemyChampionId,
       generated_at: now,
       generated_by: "system",
+      high_mastery_required: false,
       manual_adjustment: 0,
       public_eligible: normalizeCounterRankingV2PublicEligible({
         publicEligible: Boolean(input.publicEligible) && input.action === "approve",
@@ -8261,6 +8327,7 @@ function validateCounterRankingV2MechanicalReviewInput(
       adjustmentReason: CounterRankingV2AdjustmentReason;
       counterChampionId: string;
       enemyChampionId: string;
+      highMasteryRequired: boolean;
       manualAdjustment: number;
       publicEligible: boolean;
       reviewStatus: CounterRankingV2ReviewStatus;
@@ -8327,6 +8394,7 @@ function validateCounterRankingV2MechanicalReviewInput(
     adjustmentReason: input.adjustmentReason,
     counterChampionId,
     enemyChampionId,
+    highMasteryRequired: input.highMasteryRequired === true,
     manualAdjustment: input.manualAdjustment,
     ok: true,
     publicEligible: normalizeCounterRankingV2PublicEligible({
@@ -8385,6 +8453,11 @@ function resolveCounterRankingV2ReviewChampionIds({
 function toCounterRankingV2MechanicalReview(
   row: CounterRankingV2MechanicalReviewRow,
 ): CounterRankingV2MechanicalReview {
+  const isLegacyHighMasteryStatus = row.review_status === "high_mastery_required";
+  const reviewStatus: CounterRankingV2ReviewStatus = isLegacyHighMasteryStatus
+    ? "needs_more_data"
+    : (row.review_status as CounterRankingV2ReviewStatus);
+
   return createCounterRankingV2MechanicalReview({
     adjustmentReason: row.adjustment_reason,
     adminReviewNote: row.admin_review_note,
@@ -8394,9 +8467,10 @@ function toCounterRankingV2MechanicalReview(
     enemyChampionId: row.enemy_champion_id,
     generatedAt: row.generated_at,
     generatedBy: row.generated_by,
+    highMasteryRequired: Boolean(row.high_mastery_required) || isLegacyHighMasteryStatus,
     manualAdjustment: Number(row.manual_adjustment),
     publicEligible: row.public_eligible,
-    reviewStatus: row.review_status,
+    reviewStatus,
     reviewedAt: row.reviewed_at,
     reviewedBy: row.reviewed_by,
     role: row.role,
