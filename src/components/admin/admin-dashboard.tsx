@@ -37,6 +37,7 @@ import {
   deleteLeagueMatchupDraft,
   generateLeagueMatchupDraft,
 } from "@/src/app/admin/league/matchups/actions";
+import { getCounterPickManagementMetrics } from "@/src/app/admin/league/counter-picks/actions";
 import { SiteHeader } from "@/src/components/site-header";
 import { LaneStompPageShell } from "@/src/components/lane-stomp-page";
 import {
@@ -222,15 +223,15 @@ export function AdminDashboard({ section }: { section: AdminSection }) {
     section === "league-matchups"
       ? "League matchup management"
       : section === "counter-picks-collect"
-        ? "Collect Counter Pick data"
+        ? "Data Collector"
         : section === "counter-picks-profile-review"
-          ? "Counter Profile Review"
+          ? "Champion Counter Profiles"
         : section === "counter-picks-review"
-          ? "Counter Review"
+          ? "Public Counter Review"
         : section === "counter-picks-shadow-ranking"
-          ? "Counter Pick shadow ranking"
+          ? "Counter Suggestions"
           : section === "league-counter-picks" || section === "counter-picks-overview"
-        ? "Counter Pick management"
+        ? "Counter Pick Dashboard"
         : "Admin dashboard";
 
   useEffect(() => {
@@ -251,6 +252,7 @@ export function AdminDashboard({ section }: { section: AdminSection }) {
 
       const { data: sessionData, error: sessionError } = await getSessionWithTimeout();
       const sessionUser = sessionData.session?.user ?? null;
+      const accessToken = sessionData.session?.access_token ?? null;
 
       if (!isMounted) {
         window.clearTimeout(redirectTimeoutId);
@@ -296,6 +298,7 @@ export function AdminDashboard({ section }: { section: AdminSection }) {
         leagueCounterPicksResult,
         leagueMatchupsResult,
         leagueFeedbackResult,
+        counterPickMetricsResult,
       ] = await Promise.all([
         supabase
           .from("league_champions")
@@ -305,6 +308,7 @@ export function AdminDashboard({ section }: { section: AdminSection }) {
         fetchAllLeagueCounterPicks(),
         fetchAllLeagueMatchups(),
         fetchAllLeagueFeedback(),
+        loadAdminCounterPickMetrics(accessToken),
       ]);
 
       if (!isMounted) {
@@ -359,6 +363,7 @@ export function AdminDashboard({ section }: { section: AdminSection }) {
         leagueMatchups: isMissingLeagueMatchupsTable
           ? []
           : ((leagueMatchupsResult.data ?? []) as AdminLeagueMatchup[]),
+        leaguePublicCounterPicksCount: getPublicCounterPickCount(counterPickMetricsResult),
       };
 
       cachedAdminData = nextAdminData;
@@ -392,6 +397,7 @@ export function AdminDashboard({ section }: { section: AdminSection }) {
       leagueCounterPicksResult,
       leagueMatchupsResult,
       leagueFeedbackResult,
+      counterPickMetricsResult,
     ] = await Promise.all([
       supabase
         .from("league_champions")
@@ -401,6 +407,9 @@ export function AdminDashboard({ section }: { section: AdminSection }) {
       fetchAllLeagueCounterPicks(),
       fetchAllLeagueMatchups(),
       fetchAllLeagueFeedback(),
+      supabase.auth
+        .getSession()
+        .then(({ data }) => loadAdminCounterPickMetrics(data.session?.access_token ?? null)),
     ]);
 
     const isMissingLeagueMatchupsTable = isMissingLeagueMatchupsTableError(
@@ -450,6 +459,7 @@ export function AdminDashboard({ section }: { section: AdminSection }) {
       leagueMatchups: isMissingLeagueMatchupsTable
         ? []
         : ((leagueMatchupsResult.data ?? []) as AdminLeagueMatchup[]),
+      leaguePublicCounterPicksCount: getPublicCounterPickCount(counterPickMetricsResult),
     };
 
     cachedAdminData = nextAdminData;
@@ -1440,7 +1450,7 @@ export function AdminDashboard({ section }: { section: AdminSection }) {
                 {section === "overview" ? (
                   <AdminOverview
                     leagueChampionsCount={adminData.leagueChampions.length}
-                    leagueCounterPicksCount={adminData.leagueCounterPicks.length}
+                    leagueCounterPicksCount={adminData.leaguePublicCounterPicksCount}
                     leagueDraftMatchupsCount={draftLeagueMatchupsCount}
                     leagueMatchupsCount={adminData.leagueMatchups.length}
                     leagueReviewedMatchupsCount={reviewedLeagueMatchupsCount}
@@ -1625,6 +1635,23 @@ async function fetchAllLeagueFeedback() {
     .limit(1000);
 
   return { data, error };
+}
+
+async function loadAdminCounterPickMetrics(accessToken: string | null) {
+  if (!accessToken) {
+    return {
+      error: "Missing admin session.",
+      ok: false,
+    } as const;
+  }
+
+  return getCounterPickManagementMetrics({ accessToken });
+}
+
+function getPublicCounterPickCount(
+  result: Awaited<ReturnType<typeof loadAdminCounterPickMetrics>>,
+) {
+  return result.ok ? result.metrics.review.publicCounters.value : null;
 }
 
 function getSessionWithTimeout(): Promise<SessionResult> {

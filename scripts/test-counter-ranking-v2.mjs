@@ -2591,8 +2591,8 @@ assert.match(
 );
 assert.match(
   adminNavSource,
-  /href: "\/admin\/counter-picks\/review"[\s\S]*label: "Counter Review"/,
-  "Admin navigation should include the Counter Review page under Counter Pick.",
+  /href: "\/admin\/counter-picks\/review"[\s\S]*label: "Public Counter Review"/,
+  "Admin navigation should include the Public Counter Review page under Counter Pick.",
 );
 assert.match(
   adminDashboardSource,
@@ -2603,6 +2603,26 @@ assert.match(
   counterPickAdminSectionSource,
   /function CounterRankingV2AdminReviewPanel/,
   "Counter Review should render a dedicated review queue panel.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /const \[reviewTab, setReviewTab\] = useState<CounterRankingV2AdminReviewTab>\("public_counters"\)/,
+  "Public Counter Review should default to the Public counters tab.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /reviewTab === "review_suggestions" && reviewMode === "top_candidates"/,
+  "Top-candidates mode should only apply to the Review suggestions tab.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /case "public_counters":[\s\S]*return isCounterRankingV2ReviewPublicEligible\(row\.review\);/,
+  "Public counters tab should be sourced directly from public eligible reviewed rows.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /Public counters[\s\S]*Review suggestions[\s\S]*Rejected \/ Not counters[\s\S]*Needs more data[\s\S]*All rows/,
+  "Public Counter Review should expose curation tabs.",
 );
 assert.match(
   counterPickAdminSectionSource,
@@ -2686,8 +2706,8 @@ assert.match(
 );
 assert.match(
   counterPickAdminSectionSource,
-  /Select visible candidates/,
-  "Counter Review should let admins select the capped top-candidate set for batch review.",
+  /Select visible public counters[\s\S]*Select visible rows/,
+  "Counter Review should let admins select visible rows for tab-aware batch review.",
 );
 assert.match(
   counterPickAdminSectionSource,
@@ -2707,7 +2727,7 @@ assert.match(
 assert.match(
   counterPickAdminSectionSource,
   /getCounterRankingV2ChampionProfile\(\s*effectiveSelectedChampionId,\s*counterRankingV2ProfileStatusesByChampionId,\s*counterRankingV2ProfileOverridesByChampionId,\s*selectedRole/s,
-  "Shadow Ranking should use the same role-aware editable profile lookup as Counter Profile Review.",
+  "Counter Suggestions should use the same role-aware editable profile lookup as Champion Counter Profiles.",
 );
 assert.match(
   counterPickAdminSectionSource,
@@ -2757,7 +2777,7 @@ assert.doesNotMatch(
 assert.match(
   counterPickAdminSectionSource,
   /CounterRankingV2ProfileReviewPanel/,
-  "The admin Counter Profile Review page should render profile review controls.",
+  "The admin Champion Counter Profiles page should render profile review controls.",
 );
 assert.match(
   championRolesSource,

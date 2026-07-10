@@ -175,6 +175,12 @@ type CounterRankingV2AdminReviewSort =
   | "review_priority"
   | "target_champion";
 type CounterRankingV2AdminReviewMode = "all" | "top_candidates";
+type CounterRankingV2AdminReviewTab =
+  | "all_rows"
+  | "needs_more_data"
+  | "public_counters"
+  | "rejected_not_counters"
+  | "review_suggestions";
 type CounterRankingV2AdminReviewQueueSection =
   | "all"
   | "auto_approval_candidate"
@@ -256,6 +262,16 @@ const counterRankingV2AdminReviewQueueSections = [
 ] as const satisfies ReadonlyArray<{
   label: string;
   section: CounterRankingV2AdminReviewQueueSection;
+}>;
+const counterRankingV2AdminReviewTabs = [
+  { tab: "public_counters", label: "Public counters" },
+  { tab: "review_suggestions", label: "Review suggestions" },
+  { tab: "rejected_not_counters", label: "Rejected / Not counters" },
+  { tab: "needs_more_data", label: "Needs more data" },
+  { tab: "all_rows", label: "All rows" },
+] as const satisfies ReadonlyArray<{
+  label: string;
+  tab: CounterRankingV2AdminReviewTab;
 }>;
 const counterRankingV2AdminBatchReviewStatuses = [
   "verified_strong_counter",
@@ -1648,7 +1664,6 @@ export function AdminLeagueCounterPicksSection({
           onRefresh={() => void loadManagementMetrics()}
         />
         <CounterPickOverviewOperationsPanel
-          guideCount={counterPicks.length}
           isLoading={metricsStatus.isLoading}
           metrics={managementMetrics}
         />
@@ -2666,7 +2681,7 @@ function CounterRankingV2ProfileReviewPanel({
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <CardTitle className="font-mono text-xl">Counter Profile Review</CardTitle>
+            <CardTitle className="font-mono text-xl">Champion Counter Profiles</CardTitle>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
               Review champion mechanical profiles before automation can promote their suggestions.
             </p>
@@ -3566,6 +3581,7 @@ function CounterRankingV2AdminReviewPanel({
   selectedRole: LeagueRole;
 }) {
   const [automationFilter, setAutomationFilter] = useState<CounterRankingV2AutomationStatus | "all">("all");
+  const [areAdvancedFiltersOpen, setAreAdvancedFiltersOpen] = useState(false);
   const [candidateQuery, setCandidateQuery] = useState("");
   const [dataFilter, setDataFilter] = useState<"all" | "has_observed" | "low_sample" | "no_observed">("all");
   const [page, setPage] = useState(1);
@@ -3573,6 +3589,7 @@ function CounterRankingV2AdminReviewPanel({
   const [queueSection, setQueueSection] = useState<CounterRankingV2AdminReviewQueueSection>("all");
   const [reviewFilter, setReviewFilter] = useState<CounterRankingV2ReviewFilter | "reviewed_only">("all");
   const [reviewMode, setReviewMode] = useState<CounterRankingV2AdminReviewMode>("top_candidates");
+  const [reviewTab, setReviewTab] = useState<CounterRankingV2AdminReviewTab>("public_counters");
   const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(() => new Set());
   const [sortMode, setSortMode] = useState<CounterRankingV2AdminReviewSort>("review_priority");
   const [strengthFilter, setStrengthFilter] = useState<"all" | "soft_counter" | "strong_counter">("all");
@@ -3708,9 +3725,21 @@ function CounterRankingV2AdminReviewPanel({
       }),
     [championsById, queueRows, selectedRole],
   );
+  const publicCounterRows = useMemo(
+    () =>
+      sortCounterRankingV2AdminReviewRows(
+        queueRows.filter((row) => isCounterRankingV2ReviewPublicEligible(row.review)),
+        sortMode,
+        championsById,
+      ),
+    [championsById, queueRows, sortMode],
+  );
   const visibleRows = useMemo(
     () => {
-      const filteredRows = queueRows.filter((row) =>
+      const tabRows = queueRows.filter((row) =>
+        isCounterRankingV2AdminReviewRowInTab(row, reviewTab),
+      );
+      const filteredRows = tabRows.filter((row) =>
         isCounterRankingV2AdminReviewRowVisible({
           automationFilter,
           candidateQuery,
@@ -3718,12 +3747,13 @@ function CounterRankingV2AdminReviewPanel({
           publicFilter,
           queueSection,
           reviewFilter,
+          reviewTab,
           row,
           strengthFilter,
         }),
       );
       const modeRows =
-        reviewMode === "top_candidates"
+        reviewTab === "review_suggestions" && reviewMode === "top_candidates"
           ? getCounterRankingV2TopCandidateRowsPerTarget({
               rows: filteredRows,
               topCandidateCap,
@@ -3746,6 +3776,7 @@ function CounterRankingV2AdminReviewPanel({
       queueSection,
       reviewFilter,
       reviewMode,
+      reviewTab,
       sortMode,
       strengthFilter,
       topCandidateCap,
@@ -3756,7 +3787,9 @@ function CounterRankingV2AdminReviewPanel({
   const currentPage = Math.min(page, totalPages);
   const paginatedRows = visibleRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const selectedRows = visibleRows.filter((row) => selectedRowKeys.has(row.rowKey));
-  const previewRows = selectedRows.length > 0 ? selectedRows : visibleRows.slice(0, 12);
+  const previewRows = publicCounterRows.slice(0, 12);
+  const activeTabLabel =
+    counterRankingV2AdminReviewTabs.find((tab) => tab.tab === reviewTab)?.label ?? "Rows";
 
   function runBatchReview({
     publicEligible,
@@ -3794,7 +3827,7 @@ function CounterRankingV2AdminReviewPanel({
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <CardTitle className="font-mono text-xl">Counter Review</CardTitle>
+              <CardTitle className="font-mono text-xl">Public Counter Review</CardTitle>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
                 Review mechanical counter suggestions across champion-role profiles, approve public
                 candidates, and keep rejected or not-a-counter rows out of public Counter Pick.
@@ -3819,7 +3852,14 @@ function CounterRankingV2AdminReviewPanel({
             Counter Pick only uses reviewed and public eligible counters.
           </p>
 
-          <CounterRankingV2TargetReviewSummaryPanel summaries={targetSummaries} />
+          <CounterRankingV2TargetReviewSummaryPanel
+            onOpenPublicCounters={() => {
+              setReviewTab("public_counters");
+              setSelectedRowKeys(new Set());
+              setPage(1);
+            }}
+            summaries={targetSummaries}
+          />
 
           {unsupportedRoleReviewCount > 0 ? (
             <p className="rounded-md border border-amber-300/20 bg-amber-500/10 p-3 text-sm text-amber-100">
@@ -3827,7 +3867,35 @@ function CounterRankingV2AdminReviewPanel({
             </p>
           ) : null}
 
-          <div className="grid gap-4 lg:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            {counterRankingV2AdminReviewTabs.map((tab) => {
+              const count = getCounterRankingV2AdminReviewTabCount(queueRows, tab.tab);
+              const isActive = reviewTab === tab.tab;
+
+              return (
+                <button
+                  className={cn(
+                    "rounded-md border p-3 text-left transition",
+                    isActive
+                      ? "border-cyan-300/30 bg-cyan-500/10 text-cyan-100"
+                      : "border-white/10 bg-white/[0.03] text-zinc-300 hover:border-cyan-300/25 hover:bg-cyan-500/[0.06]",
+                  )}
+                  key={tab.tab}
+                  onClick={() => {
+                    setReviewTab(tab.tab);
+                    setSelectedRowKeys(new Set());
+                    setPage(1);
+                  }}
+                  type="button"
+                >
+                  <span className="block text-sm font-semibold">{tab.label}</span>
+                  <span className="mt-1 block text-xl font-semibold">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-3">
             <AdminReviewSelect
               label="Role"
               onChange={(value) => {
@@ -3874,7 +3942,23 @@ function CounterRankingV2AdminReviewPanel({
                 value={candidateQuery}
               />
             </label>
+          </div>
 
+          <button
+            className="inline-flex w-fit items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-zinc-200 transition hover:border-cyan-300/25 hover:bg-cyan-500/[0.06]"
+            onClick={() => setAreAdvancedFiltersOpen((isOpen) => !isOpen)}
+            type="button"
+          >
+            {areAdvancedFiltersOpen ? (
+              <ChevronDown className="size-4" aria-hidden="true" />
+            ) : (
+              <ChevronRight className="size-4" aria-hidden="true" />
+            )}
+            Advanced filters
+          </button>
+
+          {areAdvancedFiltersOpen ? (
+            <div className="grid gap-3 rounded-lg border border-white/10 bg-black/15 p-3 lg:grid-cols-5">
             <AdminReviewSelect
               label="Sort"
               onChange={(value) => setSortMode(value as CounterRankingV2AdminReviewSort)}
@@ -3886,9 +3970,6 @@ function CounterRankingV2AdminReviewPanel({
                 </option>
               ))}
             </AdminReviewSelect>
-          </div>
-
-          <div className="grid gap-3 lg:grid-cols-5">
             <AdminReviewSelect
               label="Queue mode"
               onChange={(value) => {
@@ -3988,10 +4069,12 @@ function CounterRankingV2AdminReviewPanel({
               <option className={selectOptionClassName} value="soft_counter">Soft counter suggestions</option>
             </AdminReviewSelect>
           </div>
+          ) : null}
         </CardContent>
       </Card>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      {reviewTab === "review_suggestions" && areAdvancedFiltersOpen ? (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {counterRankingV2AdminReviewQueueSections.map((section) => {
           const count = getCounterRankingV2AdminReviewSectionCount(queueRows, section.section);
           const isActive = queueSection === section.section;
@@ -4017,9 +4100,11 @@ function CounterRankingV2AdminReviewPanel({
           );
         })}
       </div>
+      ) : null}
 
       <CounterRankingV2AdminBatchPanel
         disabled={isBatchSaving}
+        isPublicCountersTab={reviewTab === "public_counters"}
         onClearSelection={() => setSelectedRowKeys(new Set())}
         onBatchReview={runBatchReview}
         onSelectVisibleRows={() =>
@@ -4029,13 +4114,17 @@ function CounterRankingV2AdminReviewPanel({
         visibleCount={visibleRows.length}
       />
 
-      <CounterRankingV2AdminPublicPreviewPanel championsById={championsById} rows={previewRows} />
+      <CounterRankingV2AdminPublicPreviewPanel
+        championsById={championsById}
+        rows={previewRows}
+        totalPublicRows={publicCounterRows.length}
+      />
 
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-zinc-400">
-            Showing {paginatedRows.length} of {visibleRows.length} review queue rows
-            {reviewMode === "top_candidates"
+            Showing {paginatedRows.length} of {visibleRows.length} {activeTabLabel.toLowerCase()} rows
+            {reviewTab === "review_suggestions" && reviewMode === "top_candidates"
               ? ` in top-${topCandidateCap}-per-target mode.`
               : "."}
           </p>
@@ -4083,6 +4172,7 @@ function CounterRankingV2AdminReviewPanel({
               isSelected={selectedRowKeys.has(row.rowKey)}
               key={row.rowKey}
               onSaveReview={onSaveReview}
+              reviewTab={reviewTab}
               onToggleSelected={() =>
                 setSelectedRowKeys((currentKeys) => {
                   const nextKeys = new Set(currentKeys);
@@ -4100,7 +4190,7 @@ function CounterRankingV2AdminReviewPanel({
             />
           ))
         ) : (
-          <EmptyState text="No Counter Review rows match the current filters." />
+          <EmptyState text={getCounterRankingV2AdminReviewEmptyStateText(reviewTab)} />
         )}
       </div>
     </div>
@@ -4162,8 +4252,10 @@ function CounterRankingV2AdminReviewSummaryGrid({
 }
 
 function CounterRankingV2TargetReviewSummaryPanel({
+  onOpenPublicCounters,
   summaries,
 }: {
+  onOpenPublicCounters: () => void;
   summaries: CounterRankingV2TargetReviewSummary[];
 }) {
   if (summaries.length === 0) {
@@ -4197,7 +4289,14 @@ function CounterRankingV2TargetReviewSummaryPanel({
             {summary.publicEligible >= counterRankingV2PublicCounterWarningThreshold ? (
               <p className="mt-2 rounded-md border border-amber-300/20 bg-amber-500/10 p-2 text-xs leading-5 text-amber-100">
                 {summary.label} already has {summary.publicEligible} public counters. Consider
-                keeping only the clearest recommendations.
+                keeping only the clearest 3-6 recommendations.
+                <button
+                  className="ml-2 font-semibold text-amber-50 underline-offset-4 hover:underline"
+                  onClick={onOpenPublicCounters}
+                  type="button"
+                >
+                  Open Public counters
+                </button>
               </p>
             ) : null}
             <div className="mt-3 grid gap-2 sm:grid-cols-3">
@@ -4217,6 +4316,7 @@ function CounterRankingV2TargetReviewSummaryPanel({
 
 function CounterRankingV2AdminBatchPanel({
   disabled,
+  isPublicCountersTab,
   onClearSelection,
   onBatchReview,
   onSelectVisibleRows,
@@ -4224,6 +4324,7 @@ function CounterRankingV2AdminBatchPanel({
   visibleCount,
 }: {
   disabled: boolean;
+  isPublicCountersTab: boolean;
   onClearSelection: () => void;
   onBatchReview: (input: {
     publicEligible?: boolean;
@@ -4234,6 +4335,7 @@ function CounterRankingV2AdminBatchPanel({
   visibleCount: number;
 }) {
   const hasSelection = selectedCount > 0;
+  const selectLabel = isPublicCountersTab ? "Select visible public counters" : "Select visible rows";
 
   return (
     <div className="rounded-lg border border-white/10 bg-black/15 p-3">
@@ -4250,7 +4352,7 @@ function CounterRankingV2AdminBatchPanel({
             type="button"
             variant="ghost"
           >
-            Select visible candidates
+            {selectLabel}
           </Button>
           <Button
             className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
@@ -4273,6 +4375,30 @@ function CounterRankingV2AdminBatchPanel({
               {formatCounterRankingV2ReviewStatus(status)}
             </Button>
           ))}
+          {isPublicCountersTab ? (
+            <>
+              <Button
+                className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                disabled={!hasSelection || disabled}
+                onClick={() => onBatchReview({ publicEligible: false })}
+                type="button"
+                variant="ghost"
+              >
+                Remove from public
+              </Button>
+              <Button
+                className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                disabled={!hasSelection || disabled}
+                onClick={() =>
+                  onBatchReview({ publicEligible: true, reviewStatus: "verified_soft_counter" })
+                }
+                type="button"
+                variant="ghost"
+              >
+                Downgrade to soft
+              </Button>
+            </>
+          ) : null}
           <Button
             className="border-emerald-300/20 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
             disabled={!hasSelection || disabled}
@@ -4300,9 +4426,11 @@ function CounterRankingV2AdminBatchPanel({
 function CounterRankingV2AdminPublicPreviewPanel({
   championsById,
   rows,
+  totalPublicRows,
 }: {
   championsById: Map<string, AdminLeagueChampion>;
   rows: CounterRankingV2AdminReviewRow[];
+  totalPublicRows: number;
 }) {
   const approvedRows = rows.filter((row) => isCounterRankingV2ReviewPublicEligible(row.review));
   const bestCounterRows = approvedRows.filter(
@@ -4315,6 +4443,10 @@ function CounterRankingV2AdminPublicPreviewPanel({
     <div className="grid gap-4 lg:grid-cols-2">
       <div className="rounded-lg border border-emerald-300/15 bg-emerald-500/[0.05] p-3">
         <p className="text-sm font-semibold text-emerald-100">Public preview: Best Counters</p>
+        <p className="mt-1 text-xs text-emerald-100/70">
+          Showing current public rows for the selected target/role, independent of queue filters.
+          {totalPublicRows > rows.length ? ` First ${rows.length} of ${totalPublicRows} shown.` : ""}
+        </p>
         <CounterRankingV2AdminPreviewList
           championsById={championsById}
           rows={bestCounterRows}
@@ -4323,6 +4455,9 @@ function CounterRankingV2AdminPublicPreviewPanel({
       </div>
       <div className="rounded-lg border border-cyan-300/15 bg-cyan-500/[0.05] p-3">
         <p className="text-sm font-semibold text-cyan-100">Public preview: Bad Into inverse</p>
+        <p className="mt-1 text-xs text-cyan-100/70">
+          Uses public eligible reviewed counters, even when the suggestion queue is empty.
+        </p>
         <CounterRankingV2AdminPreviewList
           championsById={championsById}
           rows={bestCounterRows}
@@ -4345,7 +4480,8 @@ function CounterRankingV2AdminPreviewList({
   if (rows.length === 0) {
     return (
       <p className="mt-3 rounded-md border border-white/10 bg-black/15 p-3 text-sm text-zinc-500">
-        No selected or visible rows are eligible for this public preview.
+        No public counters match the current target and role. Try the All rows tab or clear
+        candidate/status filters.
       </p>
     );
   }
@@ -4381,6 +4517,7 @@ function CounterRankingV2AdminReviewCard({
   isSelected,
   onSaveReview,
   onToggleSelected,
+  reviewTab,
   row,
 }: {
   championsById: Map<string, AdminLeagueChampion>;
@@ -4388,8 +4525,10 @@ function CounterRankingV2AdminReviewCard({
   isSelected: boolean;
   onSaveReview: (row: CounterRankingV2ComparisonRow, form: CounterRankingV2ReviewForm) => void;
   onToggleSelected: () => void;
+  reviewTab: CounterRankingV2AdminReviewTab;
   row: CounterRankingV2AdminReviewRow;
 }) {
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [form, setForm] = useState<CounterRankingV2ReviewForm>(() =>
     getCounterRankingV2ReviewForm(row.review),
   );
@@ -4406,6 +4545,7 @@ function CounterRankingV2AdminReviewCard({
     : (row.automationSuggestion?.reasons ?? []);
   const mechanicalReasons = getCounterRankingV2MechanicalReasons(row.mechanicalResult.factors, 1);
   const priorityScore = Math.round(getCounterRankingV2AdminReviewPriorityScore(row));
+  const isPublicCountersTab = reviewTab === "public_counters";
 
   function saveWithStatus(reviewStatus: CounterRankingV2ReviewStatus) {
     const nextForm = {
@@ -4503,6 +4643,51 @@ function CounterRankingV2AdminReviewCard({
       ) : null}
 
       <div className="mt-4 flex flex-wrap gap-2">
+        {isPublicCountersTab ? (
+          <>
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              disabled={isSaving}
+              onClick={() => saveWithFormPatch({ publicEligible: false })}
+              type="button"
+              variant="ghost"
+            >
+              Remove from public
+            </Button>
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              disabled={isSaving}
+              onClick={() =>
+                saveWithFormPatch({
+                  publicEligible: true,
+                  reviewStatus: "verified_soft_counter",
+                })
+              }
+              type="button"
+              variant="ghost"
+            >
+              Downgrade to soft
+            </Button>
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              disabled={isSaving}
+              onClick={() => saveWithStatus("not_a_counter")}
+              type="button"
+              variant="ghost"
+            >
+              Mark not a counter
+            </Button>
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              disabled={isSaving}
+              onClick={() => saveWithStatus("needs_more_data")}
+              type="button"
+              variant="ghost"
+            >
+              Needs more data
+            </Button>
+          </>
+        ) : null}
         {counterRankingV2ReviewStatuses
           .filter((status) => status !== "unreviewed")
           .map((status) => (
@@ -4517,6 +4702,15 @@ function CounterRankingV2AdminReviewCard({
               {formatCounterRankingV2ReviewStatus(status)}
             </Button>
           ))}
+        <Button
+          className="border-cyan-300/20 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/20"
+          onClick={() => setIsEditorOpen((isOpen) => !isOpen)}
+          type="button"
+          variant="ghost"
+        >
+          <Pencil className="size-4" aria-hidden="true" />
+          {isEditorOpen ? "Close edit" : "Edit"}
+        </Button>
         <Button
           className="border-amber-300/20 bg-amber-500/10 text-amber-100 hover:bg-amber-500/20"
           disabled={isSaving}
@@ -4537,7 +4731,8 @@ function CounterRankingV2AdminReviewCard({
         </Button>
       </div>
 
-      <form
+      {isEditorOpen ? (
+        <form
         className="mt-4 grid gap-3 lg:grid-cols-[0.5fr_1fr_auto_auto]"
         onSubmit={(event) => {
           event.preventDefault();
@@ -4600,6 +4795,7 @@ function CounterRankingV2AdminReviewCard({
           </Button>
         </div>
       </form>
+      ) : null}
     </div>
   );
 }
@@ -6210,6 +6406,35 @@ function CounterPickManagementMetricsPanel({
 
       <section className="space-y-3">
         <div>
+          <h2 className="font-mono text-lg font-semibold text-white">Public review workflow</h2>
+          <p className="mt-1 text-sm text-zinc-400">
+            Mechanical review rows that decide which counters can appear publicly.
+          </p>
+        </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          <CounterPickMetricCard
+            description="Verified strong or soft counters marked public eligible"
+            isLoading={isLoading && !metrics}
+            label="Public counters"
+            metric={metrics?.review.publicCounters ?? null}
+          />
+          <CounterPickMetricCard
+            description="Mechanical suggestions that have been classified by review"
+            isLoading={isLoading && !metrics}
+            label="Reviewed counter rows"
+            metric={metrics?.review.reviewedCounterRows ?? null}
+          />
+          <CounterPickMetricCard
+            description="Mechanical suggestions still waiting for review"
+            isLoading={isLoading && !metrics}
+            label="Unreviewed suggestions"
+            metric={metrics?.review.unreviewedSuggestions ?? null}
+          />
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div>
           <h2 className="font-mono text-lg font-semibold text-white">Editorial content</h2>
           <p className="mt-1 text-sm text-zinc-400">
             Manually reviewed guide records from the editorial Counter Pick table.
@@ -6241,11 +6466,9 @@ function CounterPickManagementMetricsPanel({
 }
 
 function CounterPickOverviewOperationsPanel({
-  guideCount,
   isLoading,
   metrics,
 }: {
-  guideCount: number;
   isLoading: boolean;
   metrics: CounterPickManagementMetrics | null;
 }) {
@@ -6255,9 +6478,13 @@ function CounterPickOverviewOperationsPanel({
   return (
     <Card className="border-white/10 bg-[#10182b]/90 text-white shadow-xl shadow-black/15">
       <CardHeader>
-        <CardTitle className="font-mono text-xl">Counter Pick overview</CardTitle>
+        <CardTitle className="font-mono text-xl">Counter Pick Dashboard</CardTitle>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
           Snapshot of stored data, collection activity, and the latest patch/rank coverage signal.
+        </p>
+        <p className="mt-3 rounded-md border border-cyan-300/20 bg-cyan-500/10 p-3 text-sm leading-6 text-cyan-100">
+          Workflow: Collect data &rarr; Review champion profiles &rarr; Inspect suggestions &rarr;
+          Curate public counters.
         </p>
       </CardHeader>
       <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -6268,16 +6495,20 @@ function CounterPickOverviewOperationsPanel({
           metric={metrics?.operations.seedCandidates ?? null}
         />
         <CounterPickMetricCard
+          description="Reviewed mechanical counters eligible to appear publicly"
+          isLoading={isLoading && !metrics}
+          label="Public counters"
+          metric={metrics?.review.publicCounters ?? null}
+        />
+        <CounterPickStaticOverviewCard
           description="Collection jobs currently queued, scanning, paused, or aggregating"
           isLoading={isLoading && !metrics}
           label="Active/recent scan status"
-          metric={metrics?.operations.activeCollectionJobs ?? null}
-        />
-        <CounterPickStaticOverviewCard
-          description="Loaded editorial Counter Pick records in this admin session"
-          isLoading={false}
-          label="Guide records"
-          value={guideCount.toLocaleString()}
+          value={
+            metrics?.operations.activeCollectionJobs.error
+              ? "Unavailable"
+              : (metrics?.operations.activeCollectionJobs.value?.toLocaleString() ?? "Pending")
+          }
         />
         <CounterPickStaticOverviewCard
           description={
@@ -6307,19 +6538,24 @@ function CounterPickAdminLinks() {
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <CounterPickAdminLinkCard
-        description="Open Riot ID lookup, seed candidate selection, scan configuration, active progress, controls, and recent jobs."
+        description="Collect Riot match data and rebuild counter statistics."
         href="/admin/counter-picks/collect"
-        label="Collect data"
+        label="Data Collector"
       />
       <CounterPickAdminLinkCard
-        description="Compare current observed win-rate ranks with Counter Ranking V2 mechanical fit in shadow mode."
+        description="Inspect mechanical counter suggestions before review."
         href="/admin/counter-picks/shadow-ranking"
-        label="Shadow ranking"
+        label="Counter Suggestions"
       />
       <CounterPickAdminLinkCard
-        description="Review and promote Counter Ranking V2 champion mechanical profiles before automation can use them."
+        description="Curate which reviewed counters are eligible to appear publicly."
+        href="/admin/counter-picks/review"
+        label="Public Counter Review"
+      />
+      <CounterPickAdminLinkCard
+        description="Review each champion-role mechanical profile used by the suggestion engine."
         href="/admin/counter-picks/profile-review"
-        label="Counter Profile Review"
+        label="Champion Counter Profiles"
       />
     </div>
   );
@@ -6938,6 +7174,13 @@ function getCounterRankingV2AdminReviewSectionCount(
   return rows.filter((row) => isCounterRankingV2AdminReviewRowInSection(row, section)).length;
 }
 
+function getCounterRankingV2AdminReviewTabCount(
+  rows: CounterRankingV2AdminReviewRow[],
+  tab: CounterRankingV2AdminReviewTab,
+) {
+  return rows.filter((row) => isCounterRankingV2AdminReviewRowInTab(row, tab)).length;
+}
+
 function getCounterRankingV2TopCandidateRowsPerTarget({
   rows,
   topCandidateCap,
@@ -6986,6 +7229,7 @@ function isCounterRankingV2AdminReviewRowVisible({
   publicFilter,
   queueSection,
   reviewFilter,
+  reviewTab,
   row,
   strengthFilter,
 }: {
@@ -6995,6 +7239,7 @@ function isCounterRankingV2AdminReviewRowVisible({
   publicFilter: "all" | "not_public" | "public_eligible";
   queueSection: CounterRankingV2AdminReviewQueueSection;
   reviewFilter: CounterRankingV2ReviewFilter | "reviewed_only";
+  reviewTab: CounterRankingV2AdminReviewTab;
   row: CounterRankingV2AdminReviewRow;
   strengthFilter: "all" | "soft_counter" | "strong_counter";
 }) {
@@ -7002,6 +7247,10 @@ function isCounterRankingV2AdminReviewRowVisible({
   const observedGames = row.observed?.games ?? 0;
   const reviewStatus = row.review?.reviewStatus ?? "unreviewed";
   const isPublicEligible = isCounterRankingV2ReviewPublicEligible(row.review);
+
+  if (reviewTab === "public_counters") {
+    return !query || row.candidateChampionId.toLowerCase().includes(query);
+  }
 
   if (!isCounterRankingV2AdminReviewRowInSection(row, queueSection)) {
     return false;
@@ -7070,6 +7319,47 @@ function isCounterRankingV2AdminReviewRowVisible({
   }
 
   return true;
+}
+
+function isCounterRankingV2AdminReviewRowInTab(
+  row: CounterRankingV2AdminReviewRow,
+  tab: CounterRankingV2AdminReviewTab,
+) {
+  const reviewStatus = row.review?.reviewStatus ?? "unreviewed";
+
+  switch (tab) {
+    case "public_counters":
+      return isCounterRankingV2ReviewPublicEligible(row.review);
+    case "review_suggestions":
+      return (
+        row.review === null ||
+        reviewStatus === "unreviewed" ||
+        row.automationSuggestion?.automationStatus === "auto_approval_candidate" ||
+        row.automationSuggestion?.automationStatus === "auto_suggested" ||
+        row.automationSuggestion?.automationStatus === "needs_review"
+      );
+    case "rejected_not_counters":
+      return reviewStatus === "incorrect_suggestion" || reviewStatus === "not_a_counter";
+    case "needs_more_data":
+      return reviewStatus === "needs_more_data";
+    case "all_rows":
+      return true;
+  }
+}
+
+function getCounterRankingV2AdminReviewEmptyStateText(tab: CounterRankingV2AdminReviewTab) {
+  switch (tab) {
+    case "public_counters":
+      return "No public counters match the current filters. Try the All rows tab or clear candidate/status filters.";
+    case "review_suggestions":
+      return "No review suggestions match the current filters. Try All rows or loosen advanced filters.";
+    case "rejected_not_counters":
+      return "No rejected or not-a-counter rows match the current filters.";
+    case "needs_more_data":
+      return "No needs-more-data rows match the current filters.";
+    case "all_rows":
+      return "No rows match the current filters. Clear candidate search or advanced filters.";
+  }
 }
 
 function isCounterRankingV2AdminReviewRowInSection(

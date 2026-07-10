@@ -165,12 +165,17 @@ function testCounterRankingV2ShadowProfileSelection() {
   );
   assert.equal(counterPickSectionSource.includes("Reviewed v${profile.version}"), false);
   assert.equal(counterPickSectionSource.includes("profile v${profile.version}"), false);
-  assert.equal(counterPickSectionSource.includes("Counter Profile Review"), true);
+  assert.equal(counterPickSectionSource.includes("Champion Counter Profiles"), true);
+  assert.equal(adminNavSource.includes('label: "Counter Pick Dashboard"'), true);
+  assert.equal(adminNavSource.includes('label: "Data Collector"'), true);
+  assert.equal(adminNavSource.includes('label: "Counter Suggestions"'), true);
+  assert.equal(adminNavSource.includes('label: "Public Counter Review"'), true);
+  assert.equal(adminNavSource.includes('label: "Champion Counter Profiles"'), true);
   assert.equal(counterPickSectionSource.includes("Promote to Reviewed"), true);
   assert.match(
     counterPickSectionSource,
     /if \(view === "profile-review"\)[\s\S]*<CounterRankingV2ProfileReviewPanel[\s\S]*if \(view === "review"\)[\s\S]*<CounterRankingV2AdminReviewPanel[\s\S]*if \(view === "shadow-ranking"\)/,
-    "Counter profile review and Counter Review should render on their own pages before the shadow-ranking view.",
+    "Champion Counter Profiles and Public Counter Review should render on their own pages before the Counter Suggestions view.",
   );
   assert.equal(counterPickSectionSource.includes("No observed stats are available"), true);
   assert.equal(counterPickSectionSource.includes("No review rows have been saved"), true);
@@ -307,7 +312,13 @@ function testCounterRankingV2PublicPreview() {
   assert.equal(counterPickSectionSource.includes("Low sample mechanical counter"), true);
   assert.equal(
     counterPickSectionSource.includes(
-      "No approved mechanical counters against {targetLabel} are public-preview eligible yet.",
+      "No public counters match the current target and role.",
+    ),
+    true,
+  );
+  assert.equal(
+    counterPickSectionSource.includes(
+      "Showing current public rows for the selected target/role, independent of queue filters.",
     ),
     true,
   );

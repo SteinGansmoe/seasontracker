@@ -25,6 +25,7 @@ export const emptyAdminData: AdminData = {
   leagueCounterPicks: [],
   leagueFeedback: [],
   leagueMatchups: [],
+  leaguePublicCounterPicksCount: null,
 };
 
 export const missingLeagueMatchupsTableMessage =

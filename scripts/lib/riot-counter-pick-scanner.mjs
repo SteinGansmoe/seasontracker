@@ -16,6 +16,8 @@ export const roleToTeamPosition = {
   top: "TOP",
 };
 
+export const fullMatchObservationRoles = ["top", "jungle", "mid", "adc", "support"];
+
 export const positionToRole = {
   BOTTOM: "adc",
   JUNGLE: "jungle",
@@ -145,12 +147,16 @@ export async function scanRiotCounterPickMatchups({
     matchesScanned: completedMatchIds.size,
     matchesSkippedInvalidData: 0,
     matchesSkippedUnsupportedRoleChampion: 0,
+    observationsByRole: createEmptyObservationCountsByRole(),
     observationsCreated: 0,
+    observationsSkippedTechnicalInvalid: 0,
+    allRoleObservationsAttempted: 0,
     patch,
     patchSkipped: 0,
     queueSkipped: 0,
     role: normalizedRole,
     roleSkipped: 0,
+    selectedRoleMatchupsFound: 0,
     targetMatches: 0,
     uniqueMatchIds: matchIds.length,
     wins: 0,
@@ -236,11 +242,17 @@ export async function scanRiotCounterPickMatchups({
     aggregate.candidateDiscoverySkipped += candidateObservationResult.skipped;
     aggregate.candidateObservationsFound = candidateObservations.length;
 
-    const roleMatchups = getRoleMatchups(normalizedParticipants, normalizedRole);
+    const selectedRoleMatchups = getRoleMatchupsForRole(normalizedParticipants, normalizedRole);
+    const allRoleMatchups = getAllRoleMatchups(normalizedParticipants);
 
-    if (roleMatchups.length === 0) {
+    aggregate.selectedRoleMatchupsFound += selectedRoleMatchups.length;
+
+    if (selectedRoleMatchups.length === 0) {
       aggregate.roleSkipped += 1;
       aggregate.matchesSkippedUnsupportedRoleChampion += 1;
+    }
+
+    if (allRoleMatchups.length === 0) {
       await emitProgress(
         onProgress,
         createLiveScanProgress(aggregate, matchId, matchIndex, matchIds),
@@ -248,24 +260,29 @@ export async function scanRiotCounterPickMatchups({
       continue;
     }
 
-    for (const matchup of roleMatchups) {
+    aggregate.allRoleObservationsAttempted += allRoleMatchups.length;
+
+    for (const matchup of allRoleMatchups) {
       const observation = getMatchupObservation({
         match,
         matchId,
         matchup,
         patch: getPatchFromMatch(match),
         queue,
-        role: normalizedRole,
+        role: matchup.role,
       });
 
       if (observation) {
         observations.push(observation);
+        incrementObservationCountByRole(aggregate.observationsByRole, matchup.role);
+      } else {
+        aggregate.observationsSkippedTechnicalInvalid += 1;
       }
     }
     aggregate.observationsCreated = observations.length;
 
     if (discover) {
-      roleMatchups.forEach((matchup) =>
+      selectedRoleMatchups.forEach((matchup) =>
         addDiscoveryPair(aggregate.discoveryPairs, matchup, championRegistry),
       );
       updateFocusedDiscoveryAggregate({
@@ -282,7 +299,7 @@ export async function scanRiotCounterPickMatchups({
       continue;
     }
 
-    const result = getTargetMatchupResult(roleMatchups, normalizedTarget);
+    const result = getTargetMatchupResult(selectedRoleMatchups, normalizedTarget);
 
     if (!result) {
       aggregate.observationsFound = observations.length;
@@ -355,6 +372,7 @@ export async function scanRiotCounterPickMatchups({
       ? getFocusedObservationKeys({
           focusChampion: normalizedFocusChampion.canonicalKey,
           observations,
+          role: normalizedRole,
         })
       : [],
     observations,
@@ -572,7 +590,7 @@ function getTargetMatchupResult(roleMatchups, target) {
   return null;
 }
 
-function getRoleMatchups(participants, role) {
+export function getRoleMatchupsForRole(participants, role) {
   const teamPosition = roleToTeamPosition[role];
   const roleParticipants = participants.filter(
     (participant) =>
@@ -591,9 +609,14 @@ function getRoleMatchups(participants, role) {
   return [
     {
       left,
+      role,
       right,
     },
   ];
+}
+
+export function getAllRoleMatchups(participants) {
+  return fullMatchObservationRoles.flatMap((role) => getRoleMatchupsForRole(participants, role));
 }
 
 function normalizeMatchParticipants({ aggregate, match, matchId, participants, registry }) {
@@ -752,6 +775,7 @@ function getMatchupObservation({ match, matchId, matchup, patch, queue, role }) 
   const gameStartTimestamp = Number(match?.info?.gameStartTimestamp);
   const gameDurationSeconds = Number(match?.info?.gameDuration);
 
+  // TODO: Decide explicit remake/min-duration filtering separately from full-role extraction.
   return {
     champion_a: championA.canonicalChampionId,
     champion_a_puuid: championA.puuid ?? null,
@@ -922,11 +946,12 @@ function updateFocusedDiscoveryAggregate({ aggregate, observations, registry, ro
   );
 }
 
-function getFocusedObservationKeys({ focusChampion, observations }) {
+function getFocusedObservationKeys({ focusChampion, observations, role }) {
   return (observations ?? [])
     .filter(
       (observation) =>
-        observation.champion_a === focusChampion || observation.champion_b === focusChampion,
+        observation.role === role &&
+        (observation.champion_a === focusChampion || observation.champion_b === focusChampion),
     )
     .map((observation) => `${observation.match_id}::${observation.role}`);
 }
@@ -960,6 +985,7 @@ function getTargetResult({ aggregate, registry, target }) {
 
 function getSummary(aggregate) {
   return {
+    allRoleObservationsAttempted: aggregate.allRoleObservationsAttempted ?? 0,
     candidateDiscoverySkipped: aggregate.candidateDiscoverySkipped ?? 0,
     candidateObservationsFound: aggregate.candidateObservationsFound ?? 0,
     championPairMatched: aggregate.championPairMatched,
@@ -978,12 +1004,15 @@ function getSummary(aggregate) {
     matchesScanned: aggregate.matchesScanned,
     matchesSkippedInvalidData: aggregate.matchesSkippedInvalidData,
     matchesSkippedUnsupportedRoleChampion: aggregate.matchesSkippedUnsupportedRoleChampion,
+    observationsByRole: { ...aggregate.observationsByRole },
     observationsCreated: aggregate.observationsCreated ?? 0,
+    observationsSkippedTechnicalInvalid: aggregate.observationsSkippedTechnicalInvalid ?? 0,
     patch: aggregate.patch,
     patchSkipped: aggregate.patchSkipped,
     queueSkipped: aggregate.queueSkipped,
     role: aggregate.role,
     roleSkipped: aggregate.roleSkipped,
+    selectedRoleMatchupsFound: aggregate.selectedRoleMatchupsFound ?? 0,
     targetMatches: aggregate.targetMatches,
     uniqueMatchIds: aggregate.uniqueMatchIds,
     observationsFound: aggregate.observationsFound ?? 0,
@@ -991,6 +1020,18 @@ function getSummary(aggregate) {
     wins: aggregate.wins,
     ...getChampionNormalizationSummary(aggregate),
   };
+}
+
+function createEmptyObservationCountsByRole() {
+  return Object.fromEntries(fullMatchObservationRoles.map((role) => [role, 0]));
+}
+
+function incrementObservationCountByRole(countsByRole, role) {
+  if (!Object.hasOwn(countsByRole, role)) {
+    return;
+  }
+
+  countsByRole[role] += 1;
 }
 
 async function emitProgress(onProgress, progress) {

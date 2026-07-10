@@ -16,7 +16,7 @@ export function AdminSectionCard({
   tag,
 }: {
   actionLabel?: string;
-  count: number;
+  count: number | null;
   eyebrow?: string;
   href?: string;
   label: string;
@@ -40,7 +40,9 @@ export function AdminSectionCard({
           <p className="mt-2 text-sm leading-6 text-zinc-400">{summary}</p>
         </div>
         <div className="text-right">
-          <p className="font-mono text-3xl font-semibold text-violet-100">{count}</p>
+          <p className="font-mono text-3xl font-semibold text-violet-100">
+            {count === null ? "..." : count}
+          </p>
           {tag ? <p className="mt-1 text-xs text-zinc-500">{tag}</p> : null}
         </div>
       </div>

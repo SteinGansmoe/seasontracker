@@ -39,6 +39,11 @@ export type CounterPickManagementMetrics = {
     matchupObservations: CounterPickManagementMetric;
     uniqueMatchupGroups: CounterPickManagementMetric;
   };
+  review: {
+    publicCounters: CounterPickManagementMetric;
+    reviewedCounterRows: CounterPickManagementMetric;
+    unreviewedSuggestions: CounterPickManagementMetric;
+  };
   operations: {
     activeCollectionJobs: CounterPickManagementMetric;
     latestCollection: {
@@ -91,6 +96,21 @@ export const counterPickManagementMetricSources = {
     source: "table",
     tableOrRpc: "riot_matchup_observations",
   },
+  publicCounters: {
+    description: "Reviewed mechanical counters eligible to appear publicly.",
+    filters: [
+      "review_status in (verified_strong_counter, verified_soft_counter)",
+      "public_eligible = true",
+    ],
+    source: "table",
+    tableOrRpc: "counter_ranking_v2_mechanical_reviews",
+  },
+  reviewedCounterRows: {
+    description: "Mechanical review rows that have moved beyond the unreviewed state.",
+    filters: ["review_status != unreviewed"],
+    source: "table",
+    tableOrRpc: "counter_ranking_v2_mechanical_reviews",
+  },
   reviewedGuides: {
     description: "Editorial Counter Pick guide records marked reviewed.",
     filters: ["generation_status = reviewed"],
@@ -120,6 +140,12 @@ export const counterPickManagementMetricSources = {
     filters: ["generation_status = draft"],
     source: "table",
     tableOrRpc: "league_counter_picks",
+  },
+  unreviewedSuggestions: {
+    description: "Mechanical review rows still waiting for review.",
+    filters: ["review_status = unreviewed"],
+    source: "table",
+    tableOrRpc: "counter_ranking_v2_mechanical_reviews",
   },
 } satisfies Record<string, CounterPickManagementMetricSource>;
 
@@ -165,6 +191,11 @@ export function createEmptyCounterPickManagementMetrics(): CounterPickManagement
       counterPickStatRows: createMetricValue(null),
       matchupObservations: createMetricValue(null),
       uniqueMatchupGroups: createMetricValue(null),
+    },
+    review: {
+      publicCounters: createMetricValue(null),
+      reviewedCounterRows: createMetricValue(null),
+      unreviewedSuggestions: createMetricValue(null),
     },
     operations: {
       activeCollectionJobs: createMetricValue(null),

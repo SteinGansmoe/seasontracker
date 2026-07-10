@@ -97,6 +97,7 @@ export type AdminData = {
   leagueCounterPicks: LeagueCounterPick[];
   leagueFeedback: AdminLeagueMatchupFeedback[];
   leagueMatchups: AdminLeagueMatchup[];
+  leaguePublicCounterPicksCount: number | null;
 };
 
 export type AdminSection =

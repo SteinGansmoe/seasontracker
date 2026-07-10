@@ -47,6 +47,7 @@
     "test:public-counter-pick-champions": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/test-public-counter-pick-champions.mjs",
     "test:riot-batch-isolation": "node scripts/test-riot-batch-isolation.mjs",
     "test:riot-api-authentication-failure": "node scripts/test-riot-api-authentication-failure.mjs",
+    "test:riot-full-match-observations": "node scripts/test-riot-full-match-observations.mjs",
     "test:riot-observation-validation": "node scripts/test-riot-observation-validation.mjs",
     "test:riot-rate-limiter": "node scripts/test-riot-rate-limiter.mjs",
     "test:riot-collection-jobs": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/test-riot-collection-jobs.mjs",

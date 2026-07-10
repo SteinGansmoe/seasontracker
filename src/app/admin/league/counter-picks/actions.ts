@@ -39,12 +39,13 @@ import {
   defaultRiotCollectionSafetyLimits,
   getAdaptiveRiotCollectionSeedBatchSize,
   getRiotCollectionDiscoveryStopDetail,
+  getRiotCollectionTargetValidationError,
+  isRiotCollectionTarget,
   isRiotCollectionTerminalStatus,
   normalizeCollectionScanSummary,
   riotCollectionLadderSourcesByBracket,
   riotCollectionRankBrackets,
   riotCollectionStatusLabels,
-  riotCollectionTargets,
   shouldContinueRiotCollectionSeedDiscovery,
   type RiotCollectionDiscoveryDiagnostics,
   type RiotCollectionInventoryResult,
@@ -57,6 +58,7 @@ import {
   type RiotCollectionRole,
   type RiotCollectionStatus,
   type RiotCollectionStopReason,
+  type RiotCollectionTarget,
   type StartRiotCollectionJobInput,
 } from "@/src/features/league/riot-collection-jobs";
 import type {
@@ -310,7 +312,7 @@ type RiotCollectionJobRow = {
   stop_detail: string | null;
   stop_reason: RiotCollectionStopReason | null;
   summary: Record<string, unknown> | null;
-  target_unique_matches: 50 | 100 | 200;
+  target_unique_matches: RiotCollectionTarget;
   unique_matches_processed: number;
   updated_at: string;
   warning_count: number;
@@ -417,6 +419,7 @@ type CountQueryBuilder = PromiseLike<{
   error: { message?: string } | null;
 }> & {
   eq: (column: string, value: unknown) => CountQueryBuilder;
+  in: (column: string, values: unknown[]) => CountQueryBuilder;
   not: (column: string, operator: string, value: unknown) => CountQueryBuilder;
 };
 
@@ -987,6 +990,38 @@ export async function getCounterPickManagementMetrics({
       loader: () => countRows(supabase, "counter_pick_stats"),
       onLoaded: (metric) => {
         metrics.pipeline.counterPickStatRows = metric;
+      },
+    }),
+    loadCountMetric({
+      label: "Public counters",
+      loader: () =>
+        countRows(supabase, "counter_ranking_v2_mechanical_reviews", (query) =>
+          query
+            .in("review_status", ["verified_strong_counter", "verified_soft_counter"])
+            .eq("public_eligible", true),
+        ),
+      onLoaded: (metric) => {
+        metrics.review.publicCounters = metric;
+      },
+    }),
+    loadCountMetric({
+      label: "Reviewed counter rows",
+      loader: () =>
+        countRows(supabase, "counter_ranking_v2_mechanical_reviews", (query) =>
+          query.not("review_status", "eq", "unreviewed"),
+        ),
+      onLoaded: (metric) => {
+        metrics.review.reviewedCounterRows = metric;
+      },
+    }),
+    loadCountMetric({
+      label: "Unreviewed suggestions",
+      loader: () =>
+        countRows(supabase, "counter_ranking_v2_mechanical_reviews", (query) =>
+          query.eq("review_status", "unreviewed"),
+        ),
+      onLoaded: (metric) => {
+        metrics.review.unreviewedSuggestions = metric;
       },
     }),
     loadCountMetric({
@@ -2258,8 +2293,14 @@ export async function startRiotCollectionJob(
     .single<RiotCollectionJobRow>();
 
   if (error || !data) {
+    if (error) {
+      console.error("Riot collection job creation failed", getSafeDatabaseError(error));
+    }
+
     return {
-      error: "Collection job could not be created.",
+      error: isRiotCollectionTargetConstraintError(error)
+        ? getRiotCollectionTargetValidationError()
+        : "Collection job could not be created.",
       ok: false,
     };
   }
@@ -4654,6 +4695,24 @@ function getSafeDatabaseError(error: {
   };
 }
 
+function isRiotCollectionTargetConstraintError(
+  error:
+    | {
+        code?: string;
+        details?: string;
+        message?: string;
+      }
+    | null,
+) {
+  if (!error || error.code !== "23514") {
+    return false;
+  }
+
+  const detail = `${error.message ?? ""} ${error.details ?? ""}`;
+
+  return detail.includes("riot_collection_jobs_target_check");
+}
+
 function logSeedCandidateLifecycleTransition({
   candidate,
   previousLifecycle,
@@ -4895,7 +4954,7 @@ async function validateCollectionInput(
       rankBracket: RiotCollectionRankBracket;
       regionalRoute: string;
       role: RiotCollectionRole;
-      targetUniqueMatches: 50 | 100 | 200;
+      targetUniqueMatches: RiotCollectionTarget;
     }
   | {
       error: string;
@@ -4933,9 +4992,9 @@ async function validateCollectionInput(
     };
   }
 
-  if (!riotCollectionTargets.includes(targetUniqueMatches as 50 | 100 | 200)) {
+  if (!isRiotCollectionTarget(targetUniqueMatches)) {
     return {
-      error: "Select a supported collection target.",
+      error: getRiotCollectionTargetValidationError(),
       ok: false,
     };
   }
@@ -4977,7 +5036,7 @@ async function validateCollectionInput(
       rankBracket,
       regionalRoute,
       role,
-      targetUniqueMatches: targetUniqueMatches as 50 | 100 | 200,
+      targetUniqueMatches,
     };
   }
 
@@ -4990,7 +5049,7 @@ async function validateCollectionInput(
     rankBracket,
     regionalRoute,
     role,
-    targetUniqueMatches: targetUniqueMatches as 50 | 100 | 200,
+    targetUniqueMatches,
   };
 }
 

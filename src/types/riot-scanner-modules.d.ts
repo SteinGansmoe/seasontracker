@@ -233,9 +233,23 @@ declare module "@/scripts/lib/riot-matchup-rank-attribution.mjs" {
 }
 
 declare module "@/scripts/lib/riot-counter-pick-scanner.mjs" {
+  export const fullMatchObservationRoles: ["top", "jungle", "mid", "adc", "support"];
   export const rankedSoloDuoQueueId: number;
   export function calculateTier(options: { games: number; winRate: number }): string;
   export function fetchCurrentPatch(): Promise<string>;
+  export function getAllRoleMatchups(participants: unknown[]): Array<{
+    left: Record<string, unknown>;
+    right: Record<string, unknown>;
+    role: "top" | "jungle" | "mid" | "adc" | "support";
+  }>;
+  export function getRoleMatchupsForRole(
+    participants: unknown[],
+    role: string,
+  ): Array<{
+    left: Record<string, unknown>;
+    right: Record<string, unknown>;
+    role: "top" | "jungle" | "mid" | "adc" | "support";
+  }>;
   export function normalizeRole(
     value: unknown,
   ): "top" | "jungle" | "mid" | "adc" | "support" | null;

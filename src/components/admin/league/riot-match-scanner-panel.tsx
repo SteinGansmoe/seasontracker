@@ -2082,7 +2082,7 @@ function RiotCollectionJobsPanel({
                 </select>
               </label>
               <label className="block space-y-2">
-                <span className="text-sm text-zinc-300">Role</span>
+                <span className="text-sm text-zinc-300">Collection focus role</span>
                 <select
                   className={`${fieldClassName} h-10`}
                   onChange={(event) => setRole(event.target.value as RiotCollectionRole)}
@@ -2094,6 +2094,10 @@ function RiotCollectionJobsPanel({
                     </option>
                   ))}
                 </select>
+                <span className="block text-xs leading-5 text-zinc-500">
+                  Used to choose and discover seed players. The scanner extracts all valid role
+                  matchups from every fetched match.
+                </span>
               </label>
               <label className="block space-y-2">
                 <span className="text-sm text-zinc-300">Target unique matches</span>
@@ -2267,6 +2271,9 @@ function RiotCollectionJobCard({
               : "Any champion"}
           </h3>
           <p className="mt-1 text-sm text-cyan-100">{riotCollectionStatusLabels[job.status]}</p>
+          <p className="mt-1 text-xs text-cyan-100/70">
+            Focus role: {formatRole(job.role)}. Extracting all valid roles.
+          </p>
         </div>
         <p className="font-mono text-2xl font-semibold text-cyan-100">{progressPercent}%</p>
       </div>
@@ -4689,6 +4696,18 @@ function RiotScanJobDetails({
           <Metric label="Patch skipped" value={job.progress.patchSkipped} />
           <Metric label="Queue skipped" value={job.progress.queueSkipped} />
           <Metric label="Role skipped" value={job.progress.roleSkipped} />
+          <Metric
+            label="Selected-role matchups found"
+            value={job.progress.selectedRoleMatchupsFound}
+          />
+          <Metric
+            label="All-role observations attempted"
+            value={job.progress.allRoleObservationsAttempted}
+          />
+          <Metric
+            label="Technical invalid observations skipped"
+            value={job.progress.observationsSkippedTechnicalInvalid}
+          />
           {job.mode === "target" ? (
             <Metric label="Champion pair matched" value={job.progress.championPairMatched} />
           ) : null}
@@ -4714,6 +4733,11 @@ function RiotScanJobDetails({
           />
           <Metric label="Matchup pairs discovered" value={job.progress.matchupPairsDiscovered} />
           <Metric label="Observations found" value={job.progress.observationsFound} />
+          <Metric label="Top observations" value={job.progress.observationsByRole?.top} />
+          <Metric label="Jungle observations" value={job.progress.observationsByRole?.jungle} />
+          <Metric label="Mid observations" value={job.progress.observationsByRole?.mid} />
+          <Metric label="ADC observations" value={job.progress.observationsByRole?.adc} />
+          <Metric label="Support observations" value={job.progress.observationsByRole?.support} />
           <Metric
             label="Matchup observations validated"
             value={job.progress.matchupObservationsValidated}

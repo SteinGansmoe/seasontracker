@@ -34,7 +34,7 @@ export type RiotCollectionStopReason =
   | "runtime-limit-reached"
   | "target-reached";
 
-export type RiotCollectionTarget = 50 | 100 | 200;
+export type RiotCollectionTarget = 100 | 200 | 300 | 500;
 
 export type RiotCollectionJobProgress = {
   activeScanJobId?: number | null;
@@ -278,8 +278,20 @@ export const riotCollectionRankBrackets = [
 ] as const satisfies readonly RiotCollectionRankBracket[];
 
 export const riotCollectionTargets = [
-  50, 100, 200,
+  100, 200, 300, 500,
 ] as const satisfies readonly RiotCollectionTarget[];
+
+export const maxRiotCollectionTargetUniqueMatches = 500;
+
+export function isRiotCollectionTarget(value: unknown): value is RiotCollectionTarget {
+  return riotCollectionTargets.includes(Number(value) as RiotCollectionTarget);
+}
+
+export function getRiotCollectionTargetValidationError() {
+  const options = riotCollectionTargets.join(", ").replace(/, 500$/, ", or 500");
+
+  return `Target unique matches must be ${options}.`;
+}
 
 export const defaultRiotCollectionSafetyLimits = {
   maxCandidatesInspectedPerDiscovery: 5000,

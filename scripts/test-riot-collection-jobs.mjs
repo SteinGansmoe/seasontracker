@@ -6,6 +6,17 @@ const collectionActionsSource = readFileSync(
   new URL("../src/app/admin/league/counter-picks/actions.ts", import.meta.url),
   "utf8",
 );
+const collectionPanelSource = readFileSync(
+  new URL("../src/components/admin/league/riot-match-scanner-panel.tsx", import.meta.url),
+  "utf8",
+);
+const collectionTargetMigrationSource = readFileSync(
+  new URL(
+    "../supabase/migrations/20260710090000_update_riot_collection_target_unique_matches.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const scannerSource = readFileSync(
   new URL("../scripts/lib/riot-counter-pick-scanner.mjs", import.meta.url),
   "utf8",
@@ -17,7 +28,10 @@ const {
   getAdaptiveRiotCollectionSeedBatchSize,
   getRiotCollectionDiscoveryStopDetail,
   getRiotCollectionProgressPercent,
+  getRiotCollectionTargetValidationError,
+  isRiotCollectionTarget,
   isRiotCollectionTerminalStatus,
+  maxRiotCollectionTargetUniqueMatches,
   normalizeCollectionScanSummary,
   riotCollectionLadderSourcesByBracket,
   riotCollectionRankBrackets,
@@ -35,6 +49,8 @@ testTerminalStatuses();
 testScanSummaryNormalization();
 testDiscoveryDiagnostics();
 testDiscoverySourceCodeGuards();
+testFullMatchCollectionWording();
+testCollectionTargetMigration();
 
 console.log("Riot collection job regression tests passed.");
 
@@ -109,9 +125,37 @@ function testDiscoverySourceCodeGuards() {
   assert.equal(collectionActionsSource.includes("evaluatedCandidateIds"), true);
   assert.equal(collectionActionsSource.includes("noProgressIterations"), true);
   assert.equal(
+    collectionActionsSource.includes("isRiotCollectionTarget(targetUniqueMatches)"),
+    true,
+  );
+  assert.equal(
+    collectionActionsSource.includes("getRiotCollectionTargetValidationError()"),
+    true,
+  );
+  assert.equal(collectionActionsSource.includes("Riot collection job creation failed"), true);
+  assert.equal(
+    collectionActionsSource.includes("isRiotCollectionTargetConstraintError(error)"),
+    true,
+  );
+  assert.equal(collectionActionsSource.includes("Select a supported role."), true);
+  assert.equal(
     collectionActionsSource.includes("void refreshCollection(activeJob.id, { silent: true });"),
     false,
   );
+  assert.equal(scannerSource.includes("fullMatchObservationRoles"), true);
+  assert.equal(scannerSource.includes("getAllRoleMatchups(normalizedParticipants)"), true);
+}
+
+function testFullMatchCollectionWording() {
+  assert.equal(collectionPanelSource.includes("Collection focus role"), true);
+  assert.equal(collectionPanelSource.includes("The scanner extracts all valid role"), true);
+  assert.equal(collectionPanelSource.includes("Extracting all valid roles."), true);
+}
+
+function testCollectionTargetMigration() {
+  assert.match(collectionTargetMigrationSource, /drop constraint if exists riot_collection_jobs_target_check/);
+  assert.match(collectionTargetMigrationSource, /target_unique_matches in \(100, 200, 300, 500\)/);
+  assert.match(collectionTargetMigrationSource, /not valid/);
 }
 
 function testDiscoveryDiagnostics() {
@@ -235,7 +279,22 @@ function testDiscoveryDiagnostics() {
 }
 
 function testSupportedTargets() {
-  assert.deepEqual([...riotCollectionTargets], [50, 100, 200]);
+  assert.deepEqual([...riotCollectionTargets], [100, 200, 300, 500]);
+  assert.equal(maxRiotCollectionTargetUniqueMatches, 500);
+  assert.equal(
+    getRiotCollectionTargetValidationError(),
+    "Target unique matches must be 100, 200, 300, or 500.",
+  );
+
+  for (const target of [100, 200, 300, 500]) {
+    assert.equal(isRiotCollectionTarget(target), true, `${target} should be valid`);
+  }
+
+  assert.equal(isRiotCollectionTarget("500"), true);
+
+  for (const target of [50, 250, 501, 1000]) {
+    assert.equal(isRiotCollectionTarget(target), false, `${target} should be rejected`);
+  }
 }
 
 function testSafetyLimits() {
@@ -329,8 +388,8 @@ function testProgressPercentage() {
   );
   assert.equal(
     getRiotCollectionProgressPercent({
-      targetUniqueMatches: 50,
-      uniqueMatchesProcessed: 80,
+      targetUniqueMatches: 100,
+      uniqueMatchesProcessed: 120,
     }),
     100,
   );
@@ -340,8 +399,8 @@ function testAdaptiveSeedBatchSize() {
   assert.equal(
     getAdaptiveRiotCollectionSeedBatchSize({
       seedsUsed: 0,
-      targetUniqueMatches: 50,
-      uniqueMatchesProcessed: 0,
+      targetUniqueMatches: 100,
+      uniqueMatchesProcessed: 80,
     }),
     4,
   );
@@ -356,8 +415,8 @@ function testAdaptiveSeedBatchSize() {
   assert.equal(
     getAdaptiveRiotCollectionSeedBatchSize({
       seedsUsed: 10,
-      targetUniqueMatches: 100,
-      uniqueMatchesProcessed: 100,
+      targetUniqueMatches: 200,
+      uniqueMatchesProcessed: 200,
     }),
     1,
   );

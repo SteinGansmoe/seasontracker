@@ -18,8 +18,10 @@ import type {
 
 export type RiotScanMode = "target" | "discovery";
 export type RiotScanStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type RiotObservationRoleCounts = Partial<Record<LeagueRole, number>>;
 
 export type RiotScanSummary = {
+  allRoleObservationsAttempted?: number;
   candidateDiscoverySkipped?: number;
   candidateIdLookupChunkFailures?: number;
   candidateIdLookupChunks?: number;
@@ -150,9 +152,11 @@ export type RiotScanSummary = {
   observationDuplicatesSkipped?: number;
   observationInsertFailures?: number;
   observationsAggregated?: number;
+  observationsByRole?: RiotObservationRoleCounts;
   observationsCreated?: number;
   observationsFound?: number;
   observationsInserted?: number;
+  observationsSkippedTechnicalInvalid?: number;
   matchupObservationBatchAttempts?: number;
   matchupObservationSuccessfulBatches?: number;
   matchupObservationFailedBatchAttempts?: number;
@@ -174,6 +178,7 @@ export type RiotScanSummary = {
   matchupRankParticipantsNotFound?: number;
   matchupRankSnapshotTooOld?: number;
   seedCandidatesCreatedOrUpdated?: number;
+  selectedRoleMatchupsFound?: number;
   statsRowsUpdated?: number;
   targetMatches?: number;
   uniqueCandidatesEncountered?: number;

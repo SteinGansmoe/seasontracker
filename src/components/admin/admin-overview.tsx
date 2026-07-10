@@ -66,7 +66,7 @@ export function AdminOverview({
   leagueReviewedMatchupsCount,
 }: {
   leagueChampionsCount: number;
-  leagueCounterPicksCount: number;
+  leagueCounterPicksCount: number | null;
   leagueDraftMatchupsCount: number;
   leagueMatchupsCount: number;
   leagueReviewedMatchupsCount: number;
@@ -95,13 +95,13 @@ export function AdminOverview({
             tag="records"
           />
           <AdminSectionCard
-            actionLabel="Open counters"
+            actionLabel="Open dashboard"
             count={leagueCounterPicksCount}
-            eyebrow="Active"
+            eyebrow="Public"
             href="/admin/counter-picks"
             label="Counter Picks"
-            summary="Review Counter Pick data coverage and open focused collection or shadow ranking tools."
-            tag="records"
+            summary="Collect Riot data, inspect suggestions, review champion profiles, and curate public counter recommendations."
+            tag="counters"
           />
           <AdminSectionCard
             count={leagueDraftMatchupsCount}

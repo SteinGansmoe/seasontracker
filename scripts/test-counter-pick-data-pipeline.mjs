@@ -36,6 +36,41 @@ async function testDuplicateObservationIsNotCountedTwice() {
   assert.equal(getCounterPickStat(supabase, "ahri", "zed", "all").games, 1);
 }
 
+async function testDuplicateObservationKeyIncludesRole() {
+  const supabase = new FakeSupabaseClient();
+  const result = await persistObservationsAndRebuildStats({
+    observations: [
+      createObservation({
+        champion_a: "ahri",
+        champion_a_won: false,
+        champion_b: "zed",
+        match_id: "EUW1_100",
+        role: "mid",
+        winner_champion: "zed",
+      }),
+      createObservation({
+        champion_a: "ahri",
+        champion_a_won: true,
+        champion_b: "zed",
+        match_id: "EUW1_100",
+        role: "top",
+        winner_champion: "ahri",
+      }),
+    ],
+    scanJobId: 246,
+    supabase,
+    validationContext,
+  });
+
+  assert.equal(result.observationsFound, 2, "same match in different roles should not dedupe");
+  assert.equal(result.insertedObservations, 2);
+  assert.equal(result.duplicateObservationsSkipped, 0);
+  assert.equal(result.observationsAggregated, 2);
+  assert.equal(supabase.tables.riot_matchup_observations.length, 2);
+  assert.equal(getCounterPickStat(supabase, "ahri", "zed", "all", "mid").games, 1);
+  assert.equal(getCounterPickStat(supabase, "zed", "ahri", "all", "top").games, 1);
+}
+
 async function testInvalidObservationIsNotAggregated() {
   const supabase = new FakeSupabaseClient();
   const result = await withSilencedConsole(() =>
@@ -297,12 +332,19 @@ function createObservation(overrides) {
   };
 }
 
-function getCounterPickStat(supabase, enemyChampionId, counterChampionId, rankBracket) {
+function getCounterPickStat(
+  supabase,
+  enemyChampionId,
+  counterChampionId,
+  rankBracket,
+  role = null,
+) {
   const row = supabase.tables.counter_pick_stats.find(
     (stat) =>
       stat.enemy_champion_id === enemyChampionId &&
       stat.counter_champion_id === counterChampionId &&
-      stat.rank_bracket === rankBracket,
+      stat.rank_bracket === rankBracket &&
+      (role === null || stat.role === role),
   );
 
   assert.ok(row, `Expected ${counterChampionId} into ${enemyChampionId} ${rankBracket} stat`);
@@ -577,6 +619,7 @@ class FakeQuery {
 }
 
 await testDuplicateObservationIsNotCountedTwice();
+await testDuplicateObservationKeyIncludesRole();
 await testInvalidObservationIsNotAggregated();
 testExpectedRankBracketAttribution();
 testDirectedAggregateRowsIncludeStoredObservation();
