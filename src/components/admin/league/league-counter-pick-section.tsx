@@ -53,9 +53,12 @@ import {
   createCounterRankingV2ImprovedDraftProfileSuggestion,
   createObservedCounterRankingV2Snapshot,
   calculateCounterRankingV2FinalMechanicalScore,
+  canAddCounterRankingV2PublicCounter,
   counterRankingV2DefaultAdjustmentReason,
   counterRankingV2DefaultReviewStatus,
+  counterRankingV2PublicCounterCaps,
   clampCounterRankingV2ManualAdjustment,
+  createEmptyCounterRankingV2PublicCounterCapCounts,
   filterCounterRankingV2RowsByReviewFilter,
   generateCounterRankingV2MechanicalSuggestionsForRole,
   getCounterRankingV2MechanicalReasons,
@@ -63,6 +66,7 @@ import {
   getCounterRankingV2CandidatePoolSummary,
   getCounterRankingV2ProfileKey,
   getCounterRankingV2ProfileImpactLabel,
+  getCounterRankingV2PublicCounterCapCounts,
   getCounterRankingV2AutomationBlockerSummary,
   getCounterRankingV2AutomationSummary,
   getCounterRankingV2PublicPreviewRows,
@@ -77,6 +81,7 @@ import {
   normalizeCounterRankingV2TraitId,
   sortCounterRankingV2RowsByReviewPriority,
   useReviewedMechanicalCountersPublicly,
+  type CounterRankingV2PublicCounterCapCounts,
   type CounterRankingV2AdjustmentReason,
   type CounterRankingV2AutomationBlockerSummary,
   type CounterRankingV2AutomationConfidence,
@@ -202,6 +207,8 @@ type CounterRankingV2TargetReviewSummary = {
   needsMoreData: number;
   notCounters: number;
   publicEligible: number;
+  publicSoft: number;
+  publicStrong: number;
   remainingUnreviewed: number;
   targetChampionId: string;
   verifiedSoft: number;
@@ -281,7 +288,7 @@ const counterRankingV2AdminBatchReviewStatuses = [
   "incorrect_suggestion",
 ] as const satisfies readonly CounterRankingV2AdminBatchReviewStatus[];
 const counterRankingV2TopCandidateCaps = [5, 10, 15] as const;
-const counterRankingV2PublicCounterWarningThreshold = 5;
+const counterRankingV2PublicCounterWarningThreshold = counterRankingV2PublicCounterCaps.total;
 
 export function AdminLeagueCounterPicksSection({
   champions,
@@ -1316,15 +1323,17 @@ export function AdminLeagueCounterPicksSection({
     setCounterRankingV2ReviewStatus({
       error: null,
       isLoading: false,
-      success: `${result.reviews.length} mechanical reviews updated by batch action.`,
+      success: `${result.reviews.length} mechanical reviews updated by batch action.${result.publicCapLimitedCount > 0 ? ` Public cap reached. Rows were reviewed but not made public (${result.publicCapLimitedCount}).` : ""}`,
     });
   }
 
   async function batchSaveCounterRankingV2ReviewQueueRows({
+    approveMode,
     publicEligible,
     rows,
     reviewStatus,
   }: {
+    approveMode?: "public_up_to_cap" | "reviewed_only";
     publicEligible?: boolean;
     rows: CounterRankingV2AdminReviewRow[];
     reviewStatus?: CounterRankingV2AdminBatchReviewStatus;
@@ -1353,22 +1362,40 @@ export function AdminLeagueCounterPicksSection({
     setCounterRankingV2ReviewStatus({ error: null, isLoading: true, success: null });
 
     const savedReviews: CounterRankingV2MechanicalReview[] = [];
+    const publicCapTracker = createCounterRankingV2PublicCapTracker(rows);
+    let publicCapLimitedCount = 0;
     const skippedRows: string[] = [];
 
     for (const row of rows) {
-      const nextReviewStatus = reviewStatus ?? row.review?.reviewStatus ?? "unreviewed";
+      const nextReviewStatus =
+        approveMode === "public_up_to_cap" || approveMode === "reviewed_only"
+          ? getCounterRankingV2AdminBatchApprovalStatus(row)
+          : reviewStatus ?? row.review?.reviewStatus ?? "unreviewed";
       const canBePublicEligible =
         nextReviewStatus === "verified_strong_counter" ||
         nextReviewStatus === "verified_soft_counter";
+      const requestedPublicEligible =
+        approveMode === "reviewed_only"
+          ? false
+          : approveMode === "public_up_to_cap"
+            ? true
+            : publicEligible;
       const nextPublicEligible =
-        publicEligible === undefined
+        requestedPublicEligible === undefined
           ? canBePublicEligible && Boolean(row.review?.publicEligible)
-          : canBePublicEligible && publicEligible;
+          : canBePublicEligible && requestedPublicEligible;
 
       if (publicEligible === true && !canBePublicEligible) {
         skippedRows.push(row.rowKey);
         continue;
       }
+
+      const publicCapResult = applyCounterRankingV2PublicCapForBatchRow({
+        nextPublicEligible,
+        publicCapTracker,
+        reviewStatus: nextReviewStatus,
+        row,
+      });
 
       const result = await saveCounterRankingV2MechanicalReview({
         accessToken: tokenResult.accessToken,
@@ -1382,10 +1409,12 @@ export function AdminLeagueCounterPicksSection({
             ?.id ?? row.targetChampionId,
         highMasteryRequired: row.review?.highMasteryRequired ?? false,
         manualAdjustment: row.review?.manualAdjustment ?? 0,
-        publicEligible: nextPublicEligible,
+        publicEligible: publicCapResult.publicEligible,
         reviewStatus: nextReviewStatus,
         role: row.mechanicalResult.role ?? selectedRole,
       });
+
+      publicCapLimitedCount += publicCapResult.capLimited ? 1 : 0;
 
       if (!result.ok) {
         setSavingCounterRankingV2ReviewKey(null);
@@ -1435,7 +1464,7 @@ export function AdminLeagueCounterPicksSection({
     setCounterRankingV2ReviewStatus({
       error: null,
       isLoading: false,
-      success: `${savedReviews.length} review queue row${savedReviews.length === 1 ? "" : "s"} updated${skippedRows.length > 0 ? `; skipped ${skippedRows.length} ineligible row${skippedRows.length === 1 ? "" : "s"}.` : "."}`,
+      success: `${savedReviews.length} review queue row${savedReviews.length === 1 ? "" : "s"} updated${skippedRows.length > 0 ? `; skipped ${skippedRows.length} ineligible row${skippedRows.length === 1 ? "" : "s"}` : ""}${publicCapLimitedCount > 0 ? `${skippedRows.length > 0 ? "; " : "; "}Public cap reached. Rows were reviewed but not made public (${publicCapLimitedCount}).` : "."}`,
     });
   }
 
@@ -3566,6 +3595,7 @@ function CounterRankingV2AdminReviewPanel({
   isBatchSaving: boolean;
   observedByChampionId: Map<string, CounterRankingV2ObservedRankSnapshot>;
   onBatchReview: (input: {
+    approveMode?: "public_up_to_cap" | "reviewed_only";
     publicEligible?: boolean;
     rows: CounterRankingV2AdminReviewRow[];
     reviewStatus?: CounterRankingV2AdminBatchReviewStatus;
@@ -3792,12 +3822,34 @@ function CounterRankingV2AdminReviewPanel({
     counterRankingV2AdminReviewTabs.find((tab) => tab.tab === reviewTab)?.label ?? "Rows";
 
   function runBatchReview({
+    approveMode,
     publicEligible,
     reviewStatus: nextReviewStatus,
   }: {
+    approveMode?: "public_up_to_cap" | "reviewed_only";
     publicEligible?: boolean;
     reviewStatus?: CounterRankingV2AdminBatchReviewStatus;
   }) {
+    if (
+      (approveMode === "public_up_to_cap" || publicEligible === true) &&
+      selectedRows.length > 1 &&
+      typeof window !== "undefined"
+    ) {
+      const targetCount = new Set(
+        selectedRows.map(
+          (row) =>
+            `${normalizeCounterRankingV2ChampionId(row.targetChampionId)}:${row.mechanicalResult.role ?? selectedRole}`,
+        ),
+      ).size;
+      const confirmed = window.confirm(
+        `You are about to review ${selectedRows.length} rows across ${targetCount} champion-role targets. Public eligibility will only be applied up to the configured cap.`,
+      );
+
+      if (!confirmed) {
+        return;
+      }
+    }
+
     const destructiveStatuses: CounterRankingV2AdminBatchReviewStatus[] = [
       "incorrect_suggestion",
       "not_a_counter",
@@ -3815,6 +3867,7 @@ function CounterRankingV2AdminReviewPanel({
     }
 
     onBatchReview({
+      approveMode,
       publicEligible,
       reviewStatus: nextReviewStatus,
       rows: selectedRows,
@@ -4283,9 +4336,13 @@ function CounterRankingV2TargetReviewSummaryPanel({
             <div className="flex flex-wrap items-start justify-between gap-3">
               <p className="text-sm font-semibold text-zinc-100">{summary.label}</p>
               <Badge className="border-emerald-300/20 bg-emerald-500/10 text-emerald-100">
-                {summary.publicEligible} public
+                {summary.publicEligible}/{counterRankingV2PublicCounterCaps.total} public
               </Badge>
             </div>
+            <p className="mt-2 text-xs text-zinc-500">
+              {summary.publicStrong}/{counterRankingV2PublicCounterCaps.strong} strong,{" "}
+              {summary.publicSoft}/{counterRankingV2PublicCounterCaps.soft} soft
+            </p>
             {summary.publicEligible >= counterRankingV2PublicCounterWarningThreshold ? (
               <p className="mt-2 rounded-md border border-amber-300/20 bg-amber-500/10 p-2 text-xs leading-5 text-amber-100">
                 {summary.label} already has {summary.publicEligible} public counters. Consider
@@ -4327,6 +4384,7 @@ function CounterRankingV2AdminBatchPanel({
   isPublicCountersTab: boolean;
   onClearSelection: () => void;
   onBatchReview: (input: {
+    approveMode?: "public_up_to_cap" | "reviewed_only";
     publicEligible?: boolean;
     reviewStatus?: CounterRankingV2AdminBatchReviewStatus;
   }) => void;
@@ -4375,6 +4433,24 @@ function CounterRankingV2AdminBatchPanel({
               {formatCounterRankingV2ReviewStatus(status)}
             </Button>
           ))}
+          <Button
+            className="border-cyan-300/20 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/20"
+            disabled={!hasSelection || disabled}
+            onClick={() => onBatchReview({ approveMode: "reviewed_only" })}
+            type="button"
+            variant="ghost"
+          >
+            Approve reviewed only
+          </Button>
+          <Button
+            className="border-emerald-300/20 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20"
+            disabled={!hasSelection || disabled}
+            onClick={() => onBatchReview({ approveMode: "public_up_to_cap" })}
+            type="button"
+            variant="ghost"
+          >
+            Approve and make public up to cap
+          </Button>
           {isPublicCountersTab ? (
             <>
               <Button
@@ -4911,9 +4987,13 @@ function CounterRankingV2ShadowPanel({
   const isBatchSaving = savingReviewKey === "batch";
 
   async function handleBatchReviewAction(action: BatchCounterRankingV2MechanicalReviewAction) {
+    const safePublicEligible =
+      batchPublicEligible &&
+      selectedAutoApprovalRows.every(isCounterRankingV2SafeAutoPublicApprovalRow);
+
     await onBatchSaveReview({
       action,
-      publicEligible: batchPublicEligible,
+      publicEligible: safePublicEligible,
       rows: selectedAutoApprovalRows,
     });
     setSelectedAutoApprovalCandidateIds(new Set());
@@ -7181,6 +7261,127 @@ function getCounterRankingV2AdminReviewTabCount(
   return rows.filter((row) => isCounterRankingV2AdminReviewRowInTab(row, tab)).length;
 }
 
+function createCounterRankingV2PublicCapTracker(rows: CounterRankingV2AdminReviewRow[]) {
+  const tracker = new Map<string, CounterRankingV2PublicCounterCapCounts>();
+
+  for (const row of rows) {
+    const key = getCounterRankingV2PublicCapKey(row);
+    const currentCounts =
+      tracker.get(key) ?? createEmptyCounterRankingV2PublicCounterCapCounts();
+    const rowCounts = getCounterRankingV2PublicCounterCapCounts([row.review]);
+
+    tracker.set(key, {
+      soft: currentCounts.soft + rowCounts.soft,
+      strong: currentCounts.strong + rowCounts.strong,
+      total: currentCounts.total + rowCounts.total,
+    });
+  }
+
+  return tracker;
+}
+
+function applyCounterRankingV2PublicCapForBatchRow({
+  nextPublicEligible,
+  publicCapTracker,
+  reviewStatus,
+  row,
+}: {
+  nextPublicEligible: boolean;
+  publicCapTracker: Map<string, CounterRankingV2PublicCounterCapCounts>;
+  reviewStatus: CounterRankingV2ReviewStatus;
+  row: CounterRankingV2AdminReviewRow;
+}) {
+  const key = getCounterRankingV2PublicCapKey(row);
+  const counts = {
+    ...(publicCapTracker.get(key) ?? createEmptyCounterRankingV2PublicCounterCapCounts()),
+  };
+
+  if (row.review && isCounterRankingV2ReviewPublicEligible(row.review)) {
+    decrementCounterRankingV2PublicCapCount(counts, row.review.reviewStatus);
+  }
+
+  if (!nextPublicEligible) {
+    publicCapTracker.set(key, counts);
+    return {
+      capLimited: false,
+      publicEligible: false,
+    };
+  }
+
+  if (!canAddCounterRankingV2PublicCounter({ counts, reviewStatus })) {
+    publicCapTracker.set(key, counts);
+    return {
+      capLimited: true,
+      publicEligible: false,
+    };
+  }
+
+  incrementCounterRankingV2PublicCapCount(counts, reviewStatus);
+  publicCapTracker.set(key, counts);
+
+  return {
+    capLimited: false,
+    publicEligible: true,
+  };
+}
+
+function getCounterRankingV2AdminBatchApprovalStatus(
+  row: CounterRankingV2AdminReviewRow,
+): CounterRankingV2AdminBatchReviewStatus {
+  const mechanicalScore =
+    row.review?.finalMechanicalScore ??
+    (row.mechanicalResult.status === "calculated" ? row.mechanicalResult.score : 0);
+
+  return mechanicalScore >= 80 ? "verified_strong_counter" : "verified_soft_counter";
+}
+
+function isCounterRankingV2SafeAutoPublicApprovalRow(row: CounterRankingV2ComparisonRow) {
+  const observedGames = row.observed?.games ?? 0;
+
+  return (
+    row.automationSuggestion?.automationStatus === "auto_approval_candidate" &&
+    row.automationSuggestion.blockers.length === 0 &&
+    !(observedGames > 0 && observedGames < publicCounterPickMinimumRankedGames)
+  );
+}
+
+function getCounterRankingV2PublicCapKey(row: CounterRankingV2AdminReviewRow) {
+  return [
+    normalizeCounterRankingV2ChampionId(row.targetChampionId),
+    row.mechanicalResult.role ?? row.review?.role ?? "mid",
+  ].join("::");
+}
+
+function incrementCounterRankingV2PublicCapCount(
+  counts: CounterRankingV2PublicCounterCapCounts,
+  reviewStatus: CounterRankingV2ReviewStatus,
+) {
+  counts.total += 1;
+
+  if (reviewStatus === "verified_strong_counter") {
+    counts.strong += 1;
+  }
+
+  if (reviewStatus === "verified_soft_counter") {
+    counts.soft += 1;
+  }
+}
+
+function decrementCounterRankingV2PublicCapCount(
+  counts: CounterRankingV2PublicCounterCapCounts,
+  reviewStatus: CounterRankingV2ReviewStatus,
+) {
+  counts.total = Math.max(0, counts.total - 1);
+
+  if (reviewStatus === "verified_strong_counter") {
+    counts.strong = Math.max(0, counts.strong - 1);
+  }
+
+  if (reviewStatus === "verified_soft_counter") {
+    counts.soft = Math.max(0, counts.soft - 1);
+  }
+}
+
 function getCounterRankingV2TopCandidateRowsPerTarget({
   rows,
   topCandidateCap,
@@ -7505,20 +7706,28 @@ function getCounterRankingV2TargetReviewSummaries({
         needsMoreData: 0,
         notCounters: 0,
         publicEligible: 0,
+        publicSoft: 0,
+        publicStrong: 0,
         remainingUnreviewed: 0,
         targetChampionId: row.targetChampionId,
         verifiedSoft: 0,
         verifiedStrong: 0,
       };
     const reviewStatus = row.review?.reviewStatus ?? "unreviewed";
+    const isPublicEligible = isCounterRankingV2ReviewPublicEligible(row.review);
 
     summariesByTarget.set(targetKey, {
       ...currentSummary,
       needsMoreData:
         currentSummary.needsMoreData + (reviewStatus === "needs_more_data" ? 1 : 0),
       notCounters: currentSummary.notCounters + (reviewStatus === "not_a_counter" ? 1 : 0),
-      publicEligible:
-        currentSummary.publicEligible + (isCounterRankingV2ReviewPublicEligible(row.review) ? 1 : 0),
+      publicEligible: currentSummary.publicEligible + (isPublicEligible ? 1 : 0),
+      publicSoft:
+        currentSummary.publicSoft +
+        (isPublicEligible && reviewStatus === "verified_soft_counter" ? 1 : 0),
+      publicStrong:
+        currentSummary.publicStrong +
+        (isPublicEligible && reviewStatus === "verified_strong_counter" ? 1 : 0),
       remainingUnreviewed:
         currentSummary.remainingUnreviewed +
         (row.review === null || reviewStatus === "unreviewed" ? 1 : 0),

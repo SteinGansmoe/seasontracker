@@ -9,11 +9,14 @@ import {
 } from "@/src/features/league/counter-pick-management-metrics";
 import {
   calculateMechanicalMatchupFit,
+  canAddCounterRankingV2PublicCounter,
+  counterRankingV2PublicApprovedReviewStatuses,
   counterRankingV2TraitDefinitionsById,
   createCounterRankingV2MechanicalReview,
   createCounterRankingV2GeneratedDraftChampionProfile,
   counterRankingV2GeneratedDraftProfileVersion,
   getCounterRankingV2ChampionProfile,
+  getCounterRankingV2PublicCounterCapCounts,
   getCounterRankingV2ProfileKey,
   isCounterRankingV2ProfileValueInBounds,
   isCounterRankingV2AdjustmentReason,
@@ -28,6 +31,7 @@ import {
   type CounterRankingV2ProfileReview,
   type CounterRankingV2ProfileStatus,
   type CounterRankingV2ProfileTrait,
+  type CounterRankingV2PublicCounterCapCounts,
   type CounterRankingV2TraitId,
   type CounterRankingV2ReviewStatus,
 } from "@/src/features/league/counter-ranking-v2";
@@ -624,6 +628,7 @@ export type MarkCounterRankingV2ProfilesReviewedResult =
 export type BatchSaveCounterRankingV2MechanicalReviewsResult =
   | {
       ok: true;
+      publicCapLimitedCount: number;
       reviews: CounterRankingV2MechanicalReview[];
     }
   | {
@@ -2144,6 +2149,34 @@ export async function batchSaveCounterRankingV2MechanicalReviews(
     return registryResult;
   }
 
+  const resolvedEnemyChampionId =
+    registryResult.normalizeChampionIdentifier(normalizedEnemyChampionId, registryResult.registry)
+      ?.canonicalKey ?? normalizedEnemyChampionId;
+  const { data: publicReviewRows, error: publicReviewRowsError } = await serviceClientResult.supabase
+    .from("counter_ranking_v2_mechanical_reviews")
+    .select(counterRankingV2MechanicalReviewSelect)
+    .eq("enemy_champion_id", resolvedEnemyChampionId)
+    .eq("role", input.role)
+    .eq("public_eligible", true)
+    .in("review_status", [...counterRankingV2PublicApprovedReviewStatuses])
+    .returns<CounterRankingV2MechanicalReviewRow[]>();
+
+  if (publicReviewRowsError) {
+    return {
+      error: "Counter Ranking V2 public cap state could not be loaded.",
+      ok: false,
+    };
+  }
+
+  const existingPublicReviews = (publicReviewRows ?? []).map(toCounterRankingV2MechanicalReview);
+  const existingPublicReviewByCounterId = new Map(
+    existingPublicReviews.map((review) => [
+      normalizeChampionIdForReview(review.counterChampionId),
+      review,
+    ] as const),
+  );
+  const publicCapCounts = getCounterRankingV2PublicCounterCapCounts(existingPublicReviews);
+  let publicCapLimitedCount = 0;
   const now = new Date().toISOString();
   const rowsToUpsert: Array<Record<string, unknown>> = [];
 
@@ -2182,6 +2215,30 @@ export async function batchSaveCounterRankingV2MechanicalReviews(
       action: input.action,
       mechanicalScore: mechanicalResult.score,
     });
+    const existingPublicReview = existingPublicReviewByCounterId.get(
+      normalizeChampionIdForReview(resolvedChampionIds.counterChampionId),
+    );
+    const workingCapCounts = { ...publicCapCounts };
+
+    if (existingPublicReview) {
+      decrementCounterRankingV2PublicCapCount(workingCapCounts, existingPublicReview.reviewStatus);
+    }
+
+    let nextPublicEligible = normalizeCounterRankingV2PublicEligible({
+      publicEligible: Boolean(input.publicEligible) && input.action === "approve",
+      reviewStatus,
+    });
+
+    if (nextPublicEligible) {
+      if (canAddCounterRankingV2PublicCounter({ counts: workingCapCounts, reviewStatus })) {
+        incrementCounterRankingV2PublicCapCount(workingCapCounts, reviewStatus);
+      } else {
+        nextPublicEligible = false;
+        publicCapLimitedCount += 1;
+      }
+    }
+
+    Object.assign(publicCapCounts, workingCapCounts);
 
     rowsToUpsert.push({
       adjustment_reason: "auto_generated",
@@ -2193,10 +2250,7 @@ export async function batchSaveCounterRankingV2MechanicalReviews(
       generated_by: "system",
       high_mastery_required: false,
       manual_adjustment: 0,
-      public_eligible: normalizeCounterRankingV2PublicEligible({
-        publicEligible: Boolean(input.publicEligible) && input.action === "approve",
-        reviewStatus,
-      }),
+      public_eligible: nextPublicEligible,
       review_status: reviewStatus,
       reviewed_at: now,
       reviewed_by: authResult.userId,
@@ -2231,8 +2285,39 @@ export async function batchSaveCounterRankingV2MechanicalReviews(
 
   return {
     ok: true,
+    publicCapLimitedCount,
     reviews: data.map(toCounterRankingV2MechanicalReview),
   };
+}
+
+function incrementCounterRankingV2PublicCapCount(
+  counts: CounterRankingV2PublicCounterCapCounts,
+  reviewStatus: CounterRankingV2ReviewStatus,
+) {
+  counts.total += 1;
+
+  if (reviewStatus === "verified_strong_counter") {
+    counts.strong += 1;
+  }
+
+  if (reviewStatus === "verified_soft_counter") {
+    counts.soft += 1;
+  }
+}
+
+function decrementCounterRankingV2PublicCapCount(
+  counts: CounterRankingV2PublicCounterCapCounts,
+  reviewStatus: CounterRankingV2ReviewStatus,
+) {
+  counts.total = Math.max(0, counts.total - 1);
+
+  if (reviewStatus === "verified_strong_counter") {
+    counts.strong = Math.max(0, counts.strong - 1);
+  }
+
+  if (reviewStatus === "verified_soft_counter") {
+    counts.soft = Math.max(0, counts.soft - 1);
+  }
 }
 
 export async function startRiotCollectionJob(

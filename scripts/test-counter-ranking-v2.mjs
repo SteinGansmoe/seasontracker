@@ -9,9 +9,11 @@ import {
 const rankingModule = await import("../src/features/league/counter-ranking-v2.ts");
 
 const {
+  canAddCounterRankingV2PublicCounter,
   calculateMechanicalMatchupFit,
   calculateCounterRankingV2FinalMechanicalScore,
   clampCounterRankingV2ManualAdjustment,
+  counterRankingV2PublicCounterCaps,
   counterRankingV2SupportedChampionIds,
   counterRankingV2TraitVocabulary,
   createCounterRankingV2MechanicalReview,
@@ -28,6 +30,7 @@ const {
   getCounterRankingV2ComparisonRows,
   getCounterRankingV2FactorImpactLevel,
   getCounterRankingV2MechanicalReasons,
+  getCounterRankingV2PublicCounterCapCounts,
   getCounterRankingV2PublicPreviewRows,
   getCounterRankingV2ProfileKey,
   getCounterRankingV2ProfileImpactLabel,
@@ -2222,6 +2225,80 @@ assert.equal(
   "Creating unreviewed review rows should not persist public eligibility.",
 );
 
+const cappedPublicReviews = [
+  ...Array.from({ length: counterRankingV2PublicCounterCaps.strong }, (_, index) =>
+    createCounterRankingV2MechanicalReview({
+      calculatedMechanicalScore: 90,
+      counterChampionId: `strong-${index}`,
+      enemyChampionId: "ahri",
+      publicEligible: true,
+      reviewStatus: "verified_strong_counter",
+      role: "mid",
+    }),
+  ),
+  ...Array.from({ length: counterRankingV2PublicCounterCaps.soft }, (_, index) =>
+    createCounterRankingV2MechanicalReview({
+      calculatedMechanicalScore: 70,
+      counterChampionId: `soft-${index}`,
+      enemyChampionId: "ahri",
+      publicEligible: true,
+      reviewStatus: "verified_soft_counter",
+      role: "mid",
+    }),
+  ),
+  createCounterRankingV2MechanicalReview({
+    calculatedMechanicalScore: 91,
+    counterChampionId: "reviewed-only",
+    enemyChampionId: "ahri",
+    publicEligible: false,
+    reviewStatus: "verified_strong_counter",
+    role: "mid",
+  }),
+];
+const cappedPublicCounts = getCounterRankingV2PublicCounterCapCounts(cappedPublicReviews);
+
+assert.deepEqual(
+  cappedPublicCounts,
+  {
+    soft: counterRankingV2PublicCounterCaps.soft,
+    strong: counterRankingV2PublicCounterCaps.strong,
+    total: counterRankingV2PublicCounterCaps.total,
+  },
+  "Public cap counts should include public eligible reviewed counters only.",
+);
+assert.equal(
+  canAddCounterRankingV2PublicCounter({
+    counts: cappedPublicCounts,
+    reviewStatus: "verified_strong_counter",
+  }),
+  false,
+  "Total public cap should prevent more than six public counters for one champion-role.",
+);
+assert.equal(
+  canAddCounterRankingV2PublicCounter({
+    counts: { soft: 0, strong: counterRankingV2PublicCounterCaps.strong, total: 3 },
+    reviewStatus: "verified_strong_counter",
+  }),
+  false,
+  "Strong public cap should prevent more than three strong public counters.",
+);
+assert.equal(
+  canAddCounterRankingV2PublicCounter({
+    counts: { soft: counterRankingV2PublicCounterCaps.soft, strong: 0, total: 3 },
+    reviewStatus: "verified_soft_counter",
+  }),
+  false,
+  "Soft public cap should prevent more than three soft public counters.",
+);
+assert.equal(
+  canAddCounterRankingV2PublicCounter({
+    counts: { soft: 2, strong: 2, total: 4 },
+    reviewStatus: "verified_soft_counter",
+  }),
+  true,
+  "Rows can still become public while the total and status-specific caps have room.",
+);
+
 const minimumAdjustmentReview = createCounterRankingV2MechanicalReview({
   calculatedMechanicalScore: 12,
   counterChampionId: "vex",
@@ -2708,6 +2785,26 @@ assert.match(
   counterPickAdminSectionSource,
   /Select visible public counters[\s\S]*Select visible rows/,
   "Counter Review should let admins select visible rows for tab-aware batch review.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /Approve reviewed only/,
+  "Counter Review should expose a reviewed-only batch approval action.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /Approve and make public up to cap/,
+  "Counter Review should expose a capped public batch approval action.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /Public cap reached\. Rows were reviewed but not made public/,
+  "Batch review should warn when public caps prevent public eligibility.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /You are about to review \$\{selectedRows\.length\} rows across \$\{targetCount\} champion-role targets/,
+  "Large public batch approval should warn that eligibility is capped per champion-role.",
 );
 assert.match(
   counterPickAdminSectionSource,

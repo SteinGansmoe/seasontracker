@@ -437,6 +437,11 @@ export const counterRankingV2PublicApprovedReviewStatuses = [
   "verified_strong_counter",
   "verified_soft_counter",
 ] as const;
+export const counterRankingV2PublicCounterCaps = {
+  strong: 3,
+  soft: 3,
+  total: 6,
+} as const;
 
 export const counterRankingV2SupportedChampionIds = [
   "vex",
@@ -3267,6 +3272,70 @@ export function isCounterRankingV2ReviewPublicEligible(
   return Boolean(
     review?.publicEligible && isCounterRankingV2ReviewStatusPublicEligible(review.reviewStatus),
   );
+}
+
+export type CounterRankingV2PublicCounterCapCounts = {
+  soft: number;
+  strong: number;
+  total: number;
+};
+
+export function createEmptyCounterRankingV2PublicCounterCapCounts(): CounterRankingV2PublicCounterCapCounts {
+  return {
+    soft: 0,
+    strong: 0,
+    total: 0,
+  };
+}
+
+export function getCounterRankingV2PublicCounterCapCounts(
+  reviews: Array<Pick<CounterRankingV2MechanicalReview, "publicEligible" | "reviewStatus"> | null>,
+): CounterRankingV2PublicCounterCapCounts {
+  return reviews.reduce((counts, review) => {
+    if (!isCounterRankingV2ReviewPublicEligible(review)) {
+      return counts;
+    }
+
+    return {
+      soft:
+        counts.soft + (review?.reviewStatus === "verified_soft_counter" ? 1 : 0),
+      strong:
+        counts.strong + (review?.reviewStatus === "verified_strong_counter" ? 1 : 0),
+      total: counts.total + 1,
+    };
+  }, createEmptyCounterRankingV2PublicCounterCapCounts());
+}
+
+export function canAddCounterRankingV2PublicCounter({
+  counts,
+  reviewStatus,
+}: {
+  counts: CounterRankingV2PublicCounterCapCounts;
+  reviewStatus: CounterRankingV2ReviewStatus;
+}) {
+  if (!isCounterRankingV2ReviewStatusPublicEligible(reviewStatus)) {
+    return false;
+  }
+
+  if (counts.total >= counterRankingV2PublicCounterCaps.total) {
+    return false;
+  }
+
+  if (
+    reviewStatus === "verified_strong_counter" &&
+    counts.strong >= counterRankingV2PublicCounterCaps.strong
+  ) {
+    return false;
+  }
+
+  if (
+    reviewStatus === "verified_soft_counter" &&
+    counts.soft >= counterRankingV2PublicCounterCaps.soft
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 export function isCounterRankingV2ApprovedReviewPublicEligible(
