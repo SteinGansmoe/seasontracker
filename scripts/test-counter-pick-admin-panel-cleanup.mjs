@@ -43,6 +43,7 @@ testCounterRankingV2ShadowProfileSelection();
 testCounterRankingV2ShadowCandidateAccordion();
 testCounterRankingV2ShadowReviewFilters();
 testCounterRankingV2PublicEligibilityControls();
+testCounterRankingV2PublicReviewCompactCurationTable();
 testCounterRankingV2ReviewProgressSummary();
 testCounterRankingV2PublicPreview();
 testCounterRankingV2DirectionCopy();
@@ -214,8 +215,7 @@ function testCounterRankingV2ShadowCandidateAccordion() {
   assert.equal(counterPickSectionSource.includes("aria-controls={panelId}"), true);
   assert.equal(counterPickSectionSource.includes("<ChevronDown"), true);
   assert.equal(counterPickSectionSource.includes("<ChevronRight"), true);
-  assert.equal(counterPickSectionSource.includes('label="Final reviewed"'), true);
-  assert.equal(counterPickSectionSource.includes('label="Final reviewed score"'), true);
+  assert.equal(counterPickSectionSource.includes('label="Manual review score"'), true);
   assert.equal(counterPickSectionSource.includes("Save review"), true);
   assert.equal(counterPickSectionSource.includes("hasLowObservedSample"), true);
   assert.equal(counterPickSectionSource.includes("No observed data"), true);
@@ -277,6 +277,26 @@ function testCounterRankingV2PublicEligibilityControls() {
   assert.equal(actionsSource.includes("public_eligible: validation.publicEligible"), true);
 }
 
+function testCounterRankingV2PublicReviewCompactCurationTable() {
+  assert.equal(counterPickSectionSource.includes("CounterRankingV2AdminReviewDensity"), true);
+  assert.equal(
+    counterPickSectionSource.includes(
+      'const [densityMode, setDensityMode] = useState<CounterRankingV2AdminReviewDensity>("compact")',
+    ),
+    true,
+  );
+  assert.equal(counterPickSectionSource.includes("function CounterRankingV2AdminReviewRow"), true);
+  assert.equal(counterPickSectionSource.includes("Counter review editor"), true);
+  assert.equal(counterPickSectionSource.includes("Candidate into target"), true);
+  assert.equal(counterPickSectionSource.includes("Public status"), true);
+  assert.equal(counterPickSectionSource.includes("Advanced filters"), true);
+  assert.equal(counterPickSectionSource.includes("Overview"), true);
+  assert.equal(counterPickSectionSource.includes("Public preview"), true);
+  assert.equal(counterPickSectionSource.includes("setIsPublicPreviewOpen"), true);
+  assert.equal(counterPickSectionSource.includes("top-3 z-20"), true);
+  assert.equal(counterPickSectionSource.includes("Observed games"), true);
+}
+
 function testCounterRankingV2ReviewProgressSummary() {
   assert.equal(counterPickSectionSource.includes("getCounterRankingV2ReviewProgressSummary"), true);
   assert.equal(
@@ -306,9 +326,9 @@ function testCounterRankingV2PublicPreview() {
     true,
   );
   assert.equal(counterPickSectionSource.includes("Current public ranking"), true);
-  assert.equal(counterPickSectionSource.includes("Final reviewed score"), true);
+  assert.equal(counterPickSectionSource.includes("Manual review score"), true);
   assert.equal(counterPickSectionSource.includes("Observed games"), true);
-  assert.equal(counterPickSectionSource.includes("Confidence"), true);
+  assert.equal(counterPickSectionSource.includes("Observed confidence"), true);
   assert.equal(counterPickSectionSource.includes("Low sample mechanical counter"), true);
   assert.equal(
     counterPickSectionSource.includes(

@@ -1259,7 +1259,58 @@ assert.equal(
 assert.equal(
   highScoreSuggestion?.suggestedStrength,
   "strong_counter",
-  "Scores from 80-89 should be suggested as strong counters.",
+  "High scores with multiple direct counter signals should be suggested as strong counters.",
+);
+
+const genericToolsSuggestion = generateCounterRankingV2MechanicalSuggestion({
+  mechanicalResult: {
+    ...vexIntoYone,
+    factors: [
+      testMechanicalFactor({
+        contribution: 8,
+        reason: "Generic CC gives some interaction, but does not deny the matchup plan.",
+      }),
+    ],
+    score: 88,
+  },
+  observed: null,
+});
+
+assert.equal(
+  genericToolsSuggestion?.automationStatus,
+  "needs_review",
+  "High score with generic single-signal tools should need expert review instead of auto approval.",
+);
+assert.equal(
+  genericToolsSuggestion?.suggestedStrength,
+  "soft_counter",
+  "Generic tools with only one direct signal should not create a strong-counter suggestion.",
+);
+assert.ok(
+  genericToolsSuggestion?.blockers.some(
+    (blocker) => blocker.id === "insufficient_direct_counter_signal",
+  ),
+  "High-score rows without multiple direct counter signals should expose a blocker.",
+);
+
+const zeroScoreSuggestion = generateCounterRankingV2MechanicalSuggestion({
+  mechanicalResult: {
+    ...vexIntoYone,
+    factors: [],
+    score: 0,
+  },
+  observed: null,
+});
+
+assert.equal(
+  zeroScoreSuggestion?.automationStatus,
+  "needs_review",
+  "Mechanical score 0 should never become an auto-approval candidate.",
+);
+assert.equal(
+  zeroScoreSuggestion?.suggestedStrength,
+  "poor_fit",
+  "Mechanical score 0 should remain a poor-fit suggestion.",
 );
 
 const autoSuggestedScoreSuggestion = generateCounterRankingV2MechanicalSuggestion({
@@ -3255,6 +3306,36 @@ assert.match(
   counterPickAdminSectionSource,
   /Public eligible on approve/,
   "Batch approval public eligibility should be an explicit UI choice.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /Manual review score/,
+  "Counter Suggestions should label manually adjusted review scores without implying every row is reviewed.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /Observed confidence/,
+  "Counter Suggestions should distinguish observed-data confidence from automation confidence.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /Observed mismatch/,
+  "Public Counter Review should label observed/mechanical mismatch clearly.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /Review priority/,
+  "Public Counter Review should label queue priority separately from mechanical score.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /Suggested because/,
+  "Counter suggestion rows should include a compact mechanical explanation.",
+);
+assert.match(
+  counterPickAdminSectionSource,
+  /Manual override/,
+  "Reviewed public rows that violate automation safety should be visibly marked as manual overrides.",
 );
 
 console.log("Counter Ranking V2 shadow-mode tests passed.");

@@ -283,6 +283,7 @@ export type CounterRankingV2AutomationBlockerId =
   | "excluded_unsupported_candidate_role"
   | "existing_manual_review_override"
   | "high_mastery_candidate"
+  | "insufficient_direct_counter_signal"
   | "manually_rejected"
   | "missing_profile"
   | "observed_stat_contradiction"
@@ -2539,18 +2540,24 @@ export function hasCounterRankingV2WeakMechanicalSignal(
   return topReasons.length >= 3 && topReasons.every((reason) => reason.impactLevel === "low");
 }
 
-function getCounterRankingV2SuggestedStrength(
-  score: number,
-): CounterRankingV2SuggestedStrength {
-  if (score >= 90) {
+function getCounterRankingV2SuggestedStrength({
+  factors,
+  score,
+}: {
+  factors: CounterRankingV2Factor[];
+  score: number;
+}): CounterRankingV2SuggestedStrength {
+  const directSignalCount = getCounterRankingV2DirectCounterSignalCount(factors);
+
+  if (score >= 92 && directSignalCount >= 3) {
     return "hard_counter";
   }
 
-  if (score >= 80) {
+  if (score >= 85 && directSignalCount >= 2) {
     return "strong_counter";
   }
 
-  if (score >= 65) {
+  if (score >= 65 && directSignalCount >= 1) {
     return "soft_counter";
   }
 
@@ -2559,6 +2566,18 @@ function getCounterRankingV2SuggestedStrength(
   }
 
   return "poor_fit";
+}
+
+function getCounterRankingV2DirectCounterSignalCount(factors: CounterRankingV2Factor[]) {
+  return factors.filter((factor) => {
+    const impact = getCounterRankingV2FactorImpactLevel(factor);
+
+    return impact === "high" || impact === "medium";
+  }).length;
+}
+
+function hasCounterRankingV2StrongCounterSignals(factors: CounterRankingV2Factor[]) {
+  return getCounterRankingV2DirectCounterSignalCount(factors) >= 2;
 }
 
 function getCounterRankingV2ManualAutomationStatus(
@@ -2668,6 +2687,7 @@ function createEmptyCounterRankingV2AutomationBlockerSummary(): CounterRankingV2
     excluded_unsupported_candidate_role: 0,
     existing_manual_review_override: 0,
     high_mastery_candidate: 0,
+    insufficient_direct_counter_signal: 0,
     manually_rejected: 0,
     missing_profile: 0,
     observed_stat_contradiction: 0,
@@ -2790,9 +2810,15 @@ export function generateCounterRankingV2MechanicalSuggestion({
     return null;
   }
 
-  const suggestedStrength = getCounterRankingV2SuggestedStrength(mechanicalResult.score);
+  const suggestedStrength = getCounterRankingV2SuggestedStrength({
+    factors: mechanicalResult.factors,
+    score: mechanicalResult.score,
+  });
   const manualAutomationStatus = getCounterRankingV2ManualAutomationStatus(review);
   const hasHighMasteryBlocker = isCounterRankingV2HighMasteryCandidate(candidateProfile);
+  const hasStrongCounterSignals = hasCounterRankingV2StrongCounterSignals(
+    mechanicalResult.factors,
+  );
   const hasObservedContradiction = isCounterRankingV2ObservedContradiction({
     mechanicalResult,
     observed,
@@ -2840,8 +2866,21 @@ export function generateCounterRankingV2MechanicalSuggestion({
 
     if (
       mechanicalResult.score >= counterRankingV2AutoApprovalScoreThreshold &&
+      !hasStrongCounterSignals
+    ) {
+      automationStatus = "needs_review";
+      blockers.push({
+        id: "insufficient_direct_counter_signal",
+        message:
+          "High score lacks multiple direct counter signals, so it needs expert review before approval.",
+      });
+    }
+
+    if (
+      mechanicalResult.score >= counterRankingV2AutoApprovalScoreThreshold &&
       candidateProfile.reviewStatus === "reviewed" &&
       enemyProfile.reviewStatus === "reviewed" &&
+      hasStrongCounterSignals &&
       !hasHighMasteryBlocker &&
       !isCounterRankingV2AutoApprovalBlockedByReview(review) &&
       !hasObservedContradiction &&

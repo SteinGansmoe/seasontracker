@@ -180,6 +180,7 @@ type CounterRankingV2AdminReviewSort =
   | "review_priority"
   | "target_champion";
 type CounterRankingV2AdminReviewMode = "all" | "top_candidates";
+type CounterRankingV2AdminReviewDensity = "compact" | "comfortable";
 type CounterRankingV2AdminReviewTab =
   | "all_rows"
   | "needs_more_data"
@@ -3614,6 +3615,9 @@ function CounterRankingV2AdminReviewPanel({
   const [areAdvancedFiltersOpen, setAreAdvancedFiltersOpen] = useState(false);
   const [candidateQuery, setCandidateQuery] = useState("");
   const [dataFilter, setDataFilter] = useState<"all" | "has_observed" | "low_sample" | "no_observed">("all");
+  const [densityMode, setDensityMode] = useState<CounterRankingV2AdminReviewDensity>("compact");
+  const [isOverviewOpen, setIsOverviewOpen] = useState(false);
+  const [isPublicPreviewOpen, setIsPublicPreviewOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [publicFilter, setPublicFilter] = useState<"all" | "not_public" | "public_eligible">("all");
   const [queueSection, setQueueSection] = useState<CounterRankingV2AdminReviewQueueSection>("all");
@@ -3820,6 +3824,21 @@ function CounterRankingV2AdminReviewPanel({
   const previewRows = publicCounterRows.slice(0, 12);
   const activeTabLabel =
     counterRankingV2AdminReviewTabs.find((tab) => tab.tab === reviewTab)?.label ?? "Rows";
+  const selectedTargetSummary = enemyChampionId
+    ? targetSummaries.find(
+        (targetSummary) =>
+          normalizeCounterRankingV2ChampionId(targetSummary.targetChampionId) ===
+          normalizeCounterRankingV2ChampionId(enemyChampionId),
+      ) ?? null
+    : null;
+  const selectedTargetLabel =
+    selectedTargetSummary?.label ??
+    (enemyChampionId
+      ? `${championsById.get(normalizeCounterRankingV2ChampionId(enemyChampionId))?.name ?? enemyChampionId} ${getRoleLabel(selectedRole)}`
+      : `All reviewed profile targets ${getRoleLabel(selectedRole)}`);
+  const selectedTargetSummaryText = selectedTargetSummary
+    ? `${selectedTargetSummary.label} - ${selectedTargetSummary.publicEligible}/${counterRankingV2PublicCounterCaps.total} public - ${selectedTargetSummary.publicStrong} strong - ${selectedTargetSummary.publicSoft} soft - ${selectedTargetSummary.remainingUnreviewed} unreviewed`
+    : `${selectedTargetLabel} - ${visibleRows.length} visible - ${summary.publicEligible}/${counterRankingV2PublicCounterCaps.total} public`;
 
   function runBatchReview({
     approveMode,
@@ -3898,21 +3917,58 @@ function CounterRankingV2AdminReviewPanel({
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
-          <CounterRankingV2AdminReviewSummaryGrid summary={summary} />
+          <div className="rounded-lg border border-cyan-300/20 bg-cyan-500/10 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-cyan-100">Selected target</p>
+                <p className="mt-1 text-sm text-cyan-50">{selectedTargetSummaryText}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Badge className="border-emerald-300/20 bg-emerald-500/10 text-emerald-100">
+                  {selectedTargetSummary?.publicEligible ?? summary.publicEligible}/{counterRankingV2PublicCounterCaps.total} public
+                </Badge>
+                <Badge className="border-cyan-300/20 bg-cyan-500/10 text-cyan-100">
+                  {selectedTargetSummary?.publicStrong ?? summary.verifiedStrong}/{counterRankingV2PublicCounterCaps.strong} strong
+                </Badge>
+                <Badge className="border-sky-300/20 bg-sky-500/10 text-sky-100">
+                  {selectedTargetSummary?.publicSoft ?? summary.verifiedSoft}/{counterRankingV2PublicCounterCaps.soft} soft
+                </Badge>
+              </div>
+            </div>
+          </div>
 
-          <p className="rounded-md border border-cyan-300/20 bg-cyan-500/10 p-3 text-sm leading-6 text-cyan-100">
-            Review the best candidates first. You do not need to classify every matchup. Public
-            Counter Pick only uses reviewed and public eligible counters.
-          </p>
+          <button
+            className="inline-flex w-fit items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-zinc-200 transition hover:border-cyan-300/25 hover:bg-cyan-500/[0.06]"
+            onClick={() => setIsOverviewOpen((isOpen) => !isOpen)}
+            type="button"
+          >
+            {isOverviewOpen ? (
+              <ChevronDown className="size-4" aria-hidden="true" />
+            ) : (
+              <ChevronRight className="size-4" aria-hidden="true" />
+            )}
+            Overview
+          </button>
 
-          <CounterRankingV2TargetReviewSummaryPanel
-            onOpenPublicCounters={() => {
-              setReviewTab("public_counters");
-              setSelectedRowKeys(new Set());
-              setPage(1);
-            }}
-            summaries={targetSummaries}
-          />
+          {isOverviewOpen ? (
+            <div className="space-y-4">
+              <CounterRankingV2AdminReviewSummaryGrid summary={summary} />
+
+              <p className="rounded-md border border-cyan-300/20 bg-cyan-500/10 p-3 text-sm leading-6 text-cyan-100">
+                Review the best candidates first. You do not need to classify every matchup. Public
+                Counter Pick only uses reviewed and public eligible counters.
+              </p>
+
+              <CounterRankingV2TargetReviewSummaryPanel
+                onOpenPublicCounters={() => {
+                  setReviewTab("public_counters");
+                  setSelectedRowKeys(new Set());
+                  setPage(1);
+                }}
+                summaries={targetSummaries}
+              />
+            </div>
+          ) : null}
 
           {unsupportedRoleReviewCount > 0 ? (
             <p className="rounded-md border border-amber-300/20 bg-amber-500/10 p-3 text-sm text-amber-100">
@@ -3948,7 +4004,7 @@ function CounterRankingV2AdminReviewPanel({
             })}
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className="sticky top-3 z-20 grid gap-4 rounded-lg border border-white/10 bg-[#10182b]/95 p-3 shadow-xl shadow-black/20 backdrop-blur lg:grid-cols-5">
             <AdminReviewSelect
               label="Role"
               onChange={(value) => {
@@ -3995,6 +4051,41 @@ function CounterRankingV2AdminReviewPanel({
                 value={candidateQuery}
               />
             </label>
+
+            <AdminReviewSelect
+              label="Public status"
+              onChange={(value) => {
+                setPublicFilter(value as typeof publicFilter);
+                setPage(1);
+              }}
+              value={publicFilter}
+            >
+              <option className={selectOptionClassName} value="all">All public states</option>
+              <option className={selectOptionClassName} value="public_eligible">Public eligible</option>
+              <option className={selectOptionClassName} value="not_public">Not public</option>
+            </AdminReviewSelect>
+
+            <div className="space-y-2">
+              <span className="text-sm text-zinc-300">Density</span>
+              <div className="grid h-10 grid-cols-2 rounded-md border border-white/10 bg-white/[0.03] p-1">
+                {(["compact", "comfortable"] as const).map((density) => (
+                  <button
+                    aria-pressed={densityMode === density}
+                    className={cn(
+                      "rounded px-2 text-xs font-semibold transition",
+                      densityMode === density
+                        ? "bg-cyan-500/20 text-cyan-100"
+                        : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100",
+                    )}
+                    key={density}
+                    onClick={() => setDensityMode(density)}
+                    type="button"
+                  >
+                    {density === "compact" ? "Compact" : "Comfortable"}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
           <button
@@ -4085,18 +4176,6 @@ function CounterRankingV2AdminReviewPanel({
               <option className={selectOptionClassName} value="manual_rejected">Manual rejected</option>
             </AdminReviewSelect>
             <AdminReviewSelect
-              label="Public"
-              onChange={(value) => {
-                setPublicFilter(value as typeof publicFilter);
-                setPage(1);
-              }}
-              value={publicFilter}
-            >
-              <option className={selectOptionClassName} value="all">All public states</option>
-              <option className={selectOptionClassName} value="public_eligible">Public eligible</option>
-              <option className={selectOptionClassName} value="not_public">Not public</option>
-            </AdminReviewSelect>
-            <AdminReviewSelect
               label="Observed data"
               onChange={(value) => {
                 setDataFilter(value as typeof dataFilter);
@@ -4167,11 +4246,32 @@ function CounterRankingV2AdminReviewPanel({
         visibleCount={visibleRows.length}
       />
 
-      <CounterRankingV2AdminPublicPreviewPanel
-        championsById={championsById}
-        rows={previewRows}
-        totalPublicRows={publicCounterRows.length}
-      />
+      <div className="rounded-lg border border-white/10 bg-black/15 p-3">
+        <button
+          className="inline-flex items-center gap-2 text-sm font-semibold text-zinc-100 transition hover:text-cyan-100"
+          onClick={() => setIsPublicPreviewOpen((isOpen) => !isOpen)}
+          type="button"
+        >
+          {isPublicPreviewOpen ? (
+            <ChevronDown className="size-4" aria-hidden="true" />
+          ) : (
+            <ChevronRight className="size-4" aria-hidden="true" />
+          )}
+          Public preview
+          <span className="text-xs font-normal text-zinc-500">
+            {publicCounterRows.length} public row{publicCounterRows.length === 1 ? "" : "s"}
+          </span>
+        </button>
+        {isPublicPreviewOpen ? (
+          <div className="mt-3">
+            <CounterRankingV2AdminPublicPreviewPanel
+              championsById={championsById}
+              rows={previewRows}
+              totalPublicRows={publicCounterRows.length}
+            />
+          </div>
+        ) : null}
+      </div>
 
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -4219,8 +4319,9 @@ function CounterRankingV2AdminReviewPanel({
 
         {paginatedRows.length > 0 ? (
           paginatedRows.map((row) => (
-            <CounterRankingV2AdminReviewCard
+            <CounterRankingV2AdminReviewRow
               championsById={championsById}
+              densityMode={densityMode}
               isSaving={savingReviewKey === row.candidateChampionId || savingReviewKey === "batch"}
               isSelected={selectedRowKeys.has(row.rowKey)}
               key={row.rowKey}
@@ -4587,6 +4688,440 @@ function CounterRankingV2AdminPreviewList({
   );
 }
 
+function CounterRankingV2AdminReviewRow({
+  championsById,
+  densityMode,
+  isSaving,
+  isSelected,
+  onSaveReview,
+  onToggleSelected,
+  reviewTab,
+  row,
+}: {
+  championsById: Map<string, AdminLeagueChampion>;
+  densityMode: CounterRankingV2AdminReviewDensity;
+  isSaving: boolean;
+  isSelected: boolean;
+  onSaveReview: (row: CounterRankingV2ComparisonRow, form: CounterRankingV2ReviewForm) => void;
+  onToggleSelected: () => void;
+  reviewTab: CounterRankingV2AdminReviewTab;
+  row: CounterRankingV2AdminReviewRow;
+}) {
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [form, setForm] = useState<CounterRankingV2ReviewForm>(() =>
+    getCounterRankingV2ReviewForm(row.review),
+  );
+  const target = championsById.get(normalizeCounterRankingV2ChampionId(row.targetChampionId));
+  const candidate = championsById.get(normalizeCounterRankingV2ChampionId(row.candidateChampionId));
+  const observedGames = row.observed?.games ?? 0;
+  const isLowSample = observedGames > 0 && observedGames < publicCounterPickMinimumRankedGames;
+  const isPublicAllowed =
+    form.reviewStatus === "verified_strong_counter" ||
+    form.reviewStatus === "verified_soft_counter";
+  const isPublicEligibleChecked = isPublicAllowed && form.publicEligible;
+  const reasons = row.automationSuggestion?.blockers.length
+    ? row.automationSuggestion.blockers.map((blocker) => blocker.message)
+    : (row.automationSuggestion?.reasons ?? []);
+  const mechanicalReasons = getCounterRankingV2MechanicalReasons(row.mechanicalResult.factors, 1);
+  const priorityScore = Math.round(getCounterRankingV2AdminReviewPriorityScore(row));
+  const isPublicCountersTab = reviewTab === "public_counters";
+  const suggestionExplanation = getCounterRankingV2RowSuggestionExplanation(row);
+  const rowWarnings = getCounterRankingV2RowWarnings(row);
+  const isManualOverridePublicRow = isCounterRankingV2ManualOverridePublicRow(row);
+  const rowPadding = densityMode === "compact" ? "p-2" : "p-3";
+  const metricTextClassName = densityMode === "compact" ? "text-xs" : "text-sm";
+  const manualReviewScore = row.review?.finalMechanicalScore ?? null;
+  const observedRankLabel = row.observed?.rank ? `#${row.observed.rank}` : "None";
+
+  function saveWithStatus(reviewStatus: CounterRankingV2ReviewStatus) {
+    const nextForm = {
+      ...form,
+      publicEligible:
+        reviewStatus === "verified_strong_counter" || reviewStatus === "verified_soft_counter"
+          ? form.publicEligible
+          : false,
+      reviewStatus,
+    };
+
+    setForm(nextForm);
+    onSaveReview(row, nextForm);
+  }
+
+  function saveWithFormPatch(patch: Partial<CounterRankingV2ReviewForm>) {
+    const nextForm = {
+      ...form,
+      ...patch,
+    };
+
+    setForm(nextForm);
+    onSaveReview(row, {
+      ...nextForm,
+      publicEligible:
+        nextForm.reviewStatus === "verified_strong_counter" ||
+        nextForm.reviewStatus === "verified_soft_counter"
+          ? nextForm.publicEligible
+          : false,
+    });
+  }
+
+  return (
+    <div className={cn("rounded-lg border border-white/10 bg-white/[0.03]", rowPadding)}>
+      <div className="grid gap-3 xl:grid-cols-[minmax(18rem,1.7fr)_minmax(14rem,1fr)_minmax(16rem,1fr)_minmax(18rem,1.2fr)] xl:items-center">
+        <label className="flex min-w-0 items-center gap-3 text-sm text-zinc-300">
+          <input
+            checked={isSelected}
+            className="size-4 accent-cyan-300"
+            onChange={onToggleSelected}
+            type="checkbox"
+          />
+          <span className="sr-only">Select row</span>
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-semibold text-white">
+              {candidate?.name ?? row.candidateChampionId} into {target?.name ?? row.targetChampionId}
+            </span>
+            <span className="mt-0.5 block text-xs text-zinc-500">
+              {getRoleLabel(row.mechanicalResult.role ?? "mid")} - Candidate into target
+            </span>
+          </span>
+        </label>
+
+        <div className="flex flex-wrap gap-1.5">
+          <Badge className="border-sky-300/20 bg-sky-500/10 text-sky-100">
+            {row.automationSuggestion
+              ? formatCounterRankingV2AutomationStatus(row.automationSuggestion.automationStatus)
+              : "No automation"}
+          </Badge>
+          <Badge className="border-white/10 bg-white/5 text-zinc-300">
+            {formatCounterRankingV2ReviewStatus(form.reviewStatus)}
+          </Badge>
+          {isPublicEligibleChecked ? (
+            <Badge className="border-emerald-300/20 bg-emerald-500/10 text-emerald-100">
+              Public eligible
+            </Badge>
+          ) : (
+            <Badge className="border-white/10 bg-white/5 text-zinc-400">
+              Internal review only
+            </Badge>
+          )}
+          {isManualOverridePublicRow ? (
+            <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">
+              Manual override
+            </Badge>
+          ) : null}
+          {form.highMasteryRequired ? (
+            <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">
+              High Mastery
+            </Badge>
+          ) : null}
+          {isLowSample ? (
+            <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">Low sample</Badge>
+          ) : null}
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 text-zinc-300">
+          <div>
+            <p className="text-[11px] uppercase text-zinc-500">Mechanical</p>
+            <p className={cn("font-semibold text-zinc-100", metricTextClassName)}>
+              {row.mechanicalResult.score}
+            </p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase text-zinc-500">Manual</p>
+            <p
+              className={cn(
+                "font-semibold",
+                manualReviewScore === null ? "text-zinc-500" : "text-zinc-100",
+                metricTextClassName,
+              )}
+            >
+              {manualReviewScore === null ? "None" : formatNullableNumber(manualReviewScore)}
+            </p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase text-zinc-500">Games</p>
+            <p className={cn("font-semibold text-zinc-100", metricTextClassName)}>
+              {formatNullableNumber(observedGames)}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap justify-start gap-1.5 xl:justify-end">
+          {rowWarnings.length > 0
+            ? rowWarnings.map((warning, index) => (
+                <Badge
+                  className="border-amber-300/20 bg-amber-500/10 text-amber-100"
+                  key={`${warning}-${index}`}
+                >
+                  Warning
+                </Badge>
+              ))
+            : null}
+          <Badge className="border-white/10 bg-white/5 text-zinc-300">
+            {row.observed ? `Observed ${observedRankLabel}` : "No observed data"}
+          </Badge>
+          <Badge className="border-white/10 bg-white/5 text-zinc-300">
+            Priority {priorityScore}
+          </Badge>
+        </div>
+      </div>
+
+      <div className="mt-2 flex flex-wrap justify-end gap-1.5">
+        {isPublicCountersTab ? (
+          <Button
+            className="h-8 border-white/10 bg-white/5 px-2 text-xs text-zinc-100 hover:bg-white/10"
+            disabled={isSaving}
+            onClick={() => saveWithFormPatch({ publicEligible: false })}
+            title="Remove from public"
+            type="button"
+            variant="ghost"
+          >
+            Remove
+          </Button>
+        ) : null}
+        <Button
+          className="h-8 border-cyan-300/20 bg-cyan-500/10 px-2 text-xs text-cyan-100 hover:bg-cyan-500/20"
+          disabled={isSaving}
+          onClick={() => saveWithStatus("verified_strong_counter")}
+          title="Verified strong counter"
+          type="button"
+          variant="ghost"
+        >
+          Strong
+        </Button>
+        <Button
+          className="h-8 border-sky-300/20 bg-sky-500/10 px-2 text-xs text-sky-100 hover:bg-sky-500/20"
+          disabled={isSaving}
+          onClick={() =>
+            saveWithFormPatch({
+              publicEligible: isPublicCountersTab ? true : form.publicEligible,
+              reviewStatus: "verified_soft_counter",
+            })
+          }
+          title="Verified soft counter"
+          type="button"
+          variant="ghost"
+        >
+          Soft
+        </Button>
+        <Button
+          className="h-8 border-white/10 bg-white/5 px-2 text-xs text-zinc-100 hover:bg-white/10"
+          disabled={isSaving}
+          onClick={() => saveWithStatus("needs_more_data")}
+          title="Needs more data"
+          type="button"
+          variant="ghost"
+        >
+          Data
+        </Button>
+        <Button
+          className="h-8 border-white/10 bg-white/5 px-2 text-xs text-zinc-100 hover:bg-white/10"
+          disabled={isSaving}
+          onClick={() => saveWithStatus("not_a_counter")}
+          title="Not a counter"
+          type="button"
+          variant="ghost"
+        >
+          No
+        </Button>
+        <Button
+          className="h-8 border-amber-300/20 bg-amber-500/10 px-2 text-xs text-amber-100 hover:bg-amber-500/20"
+          disabled={isSaving}
+          onClick={() => saveWithFormPatch({ highMasteryRequired: !form.highMasteryRequired })}
+          title={form.highMasteryRequired ? "Clear high mastery" : "High mastery required"}
+          type="button"
+          variant="ghost"
+        >
+          HM
+        </Button>
+        <Button
+          className="h-8 border-emerald-300/20 bg-emerald-500/10 px-2 text-xs text-emerald-100 hover:bg-emerald-500/20"
+          disabled={isSaving || !isPublicAllowed}
+          onClick={() => saveWithFormPatch({ publicEligible: !isPublicEligibleChecked })}
+          title={isPublicEligibleChecked ? "Clear public eligible" : "Public eligible"}
+          type="button"
+          variant="ghost"
+        >
+          Public
+        </Button>
+        <Button
+          className="h-8 border-cyan-300/20 bg-cyan-500/10 px-2 text-xs text-cyan-100 hover:bg-cyan-500/20"
+          onClick={() => setIsEditorOpen(true)}
+          type="button"
+          variant="ghost"
+        >
+          <Pencil className="size-3.5" aria-hidden="true" />
+          Edit
+        </Button>
+      </div>
+
+      {isEditorOpen ? (
+        <div className="fixed inset-0 z-50 bg-black/70">
+          <div className="ml-auto flex h-full w-full max-w-3xl flex-col border-l border-white/10 bg-[#071321] shadow-2xl shadow-black/40">
+            <div className="flex items-start justify-between gap-4 border-b border-white/10 p-5">
+              <div>
+                <p className="text-xs font-semibold uppercase text-cyan-200">
+                  Counter review editor
+                </p>
+                <h3 className="mt-1 text-lg font-semibold text-white">
+                  {candidate?.name ?? row.candidateChampionId} into {target?.name ?? row.targetChampionId}
+                </h3>
+                <p className="mt-1 text-sm text-zinc-400">
+                  {getRoleLabel(row.mechanicalResult.role ?? "mid")} - full row details and editing controls
+                </p>
+              </div>
+              <Button
+                className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                onClick={() => setIsEditorOpen(false)}
+                type="button"
+                variant="ghost"
+              >
+                <X className="size-4" aria-hidden="true" />
+                Close
+              </Button>
+            </div>
+
+            <div className="flex-1 space-y-4 overflow-y-auto p-5">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                <CounterRankingV2Metric label="Mechanical score" value={String(row.mechanicalResult.score)} />
+                <CounterRankingV2Metric label="Manual review score" value={formatNullableNumber(row.review?.finalMechanicalScore)} />
+                <CounterRankingV2Metric label="Observed rank" value={observedRankLabel} />
+                <CounterRankingV2Metric label="Observed games" value={formatNullableNumber(row.observed?.games)} />
+                <CounterRankingV2Metric label="Observed confidence" value={row.observed?.confidence.shortLabel ?? "No data"} />
+                <CounterRankingV2Metric label="Observed mismatch" value={row.rankDelta === null ? "None" : formatRankDelta(row.rankDelta)} />
+                <CounterRankingV2Metric label="Review priority" value={String(priorityScore)} />
+                <CounterRankingV2Metric label="Public status" value={isPublicEligibleChecked ? "Public eligible" : "Internal review only"} />
+              </div>
+
+              <div className="rounded-md border border-white/10 bg-black/15 p-3">
+                <p className="text-sm text-zinc-300">{suggestionExplanation}</p>
+                {rowWarnings.length > 0 ? (
+                  <ul className="mt-2 space-y-1">
+                    {rowWarnings.map((warning) => (
+                      <li className="text-xs text-amber-100" key={warning}>
+                        Warning: {warning}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+
+              {reasons.length > 0 || mechanicalReasons.length > 0 ? (
+                <div className="rounded-md border border-white/10 bg-black/15 p-3">
+                  {mechanicalReasons.at(0) ? (
+                    <p className="text-sm text-zinc-300">{mechanicalReasons[0].explanation}</p>
+                  ) : null}
+                  {reasons.slice(0, 3).map((reason) => (
+                    <p className="mt-1 text-xs text-zinc-500" key={reason}>{reason}</p>
+                  ))}
+                </div>
+              ) : null}
+
+              <div className="grid gap-3 rounded-md border border-white/10 bg-black/15 p-3 md:grid-cols-2">
+                <CounterRankingV2Metric
+                  label="Target profile"
+                  value={row.targetProfile ? `${formatProfileStatus(row.targetProfile.reviewStatus)} v${row.targetProfile.version}` : "Missing"}
+                />
+                <CounterRankingV2Metric
+                  label="Candidate profile"
+                  value={row.candidateProfile ? `${formatProfileStatus(row.candidateProfile.reviewStatus)} v${row.candidateProfile.version}` : "Missing"}
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {counterRankingV2ReviewStatuses
+                  .filter((status) => status !== "unreviewed")
+                  .map((status) => (
+                    <Button
+                      className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                      disabled={isSaving}
+                      key={status}
+                      onClick={() => saveWithStatus(status)}
+                      type="button"
+                      variant="ghost"
+                    >
+                      {formatCounterRankingV2ReviewStatus(status)}
+                    </Button>
+                  ))}
+              </div>
+
+              <form
+                className="grid gap-3 rounded-md border border-white/10 bg-white/[0.03] p-3 lg:grid-cols-[0.5fr_1fr]"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  onSaveReview(row, {
+                    ...form,
+                    publicEligible: isPublicAllowed && form.publicEligible,
+                  });
+                }}
+              >
+                <label className="block space-y-2">
+                  <span className="text-sm text-zinc-300">Manual adjustment</span>
+                  <Input
+                    className="h-10 border-white/10 bg-white/5 text-zinc-100"
+                    disabled={isSaving}
+                    max={30}
+                    min={-30}
+                    onChange={(event) => setForm((currentForm) => ({ ...currentForm, manualAdjustment: event.target.value }))}
+                    type="number"
+                    value={form.manualAdjustment}
+                  />
+                </label>
+                <label className="block space-y-2">
+                  <span className="text-sm text-zinc-300">Admin note</span>
+                  <Input
+                    className="h-10 border-white/10 bg-white/5 text-zinc-100"
+                    disabled={isSaving}
+                    onChange={(event) => setForm((currentForm) => ({ ...currentForm, adminReviewNote: event.target.value }))}
+                    placeholder="Admin note"
+                    value={form.adminReviewNote}
+                  />
+                </label>
+                <label className="flex items-center gap-2 rounded-md border border-white/10 bg-black/15 px-3 py-2 text-xs text-zinc-300">
+                  <input
+                    checked={isPublicEligibleChecked}
+                    className="size-4 accent-cyan-300"
+                    disabled={isSaving || !isPublicAllowed}
+                    onChange={(event) => setForm((currentForm) => ({ ...currentForm, publicEligible: event.target.checked }))}
+                    type="checkbox"
+                  />
+                  Public eligible
+                </label>
+                <label className="flex items-center gap-2 rounded-md border border-amber-300/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                  <input
+                    checked={form.highMasteryRequired}
+                    className="size-4 accent-amber-300"
+                    disabled={isSaving}
+                    onChange={(event) =>
+                      setForm((currentForm) => ({
+                        ...currentForm,
+                        highMasteryRequired: event.target.checked,
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  High mastery required
+                </label>
+                <div className="flex flex-wrap gap-2 lg:col-span-2">
+                  <Button
+                    className="border-cyan-300/20 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/20"
+                    disabled={isSaving}
+                    type="submit"
+                    variant="ghost"
+                  >
+                    <Save className="size-4" aria-hidden="true" />
+                    Save note / adjustment
+                  </Button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function CounterRankingV2AdminReviewCard({
   championsById,
   isSaving,
@@ -4622,6 +5157,9 @@ function CounterRankingV2AdminReviewCard({
   const mechanicalReasons = getCounterRankingV2MechanicalReasons(row.mechanicalResult.factors, 1);
   const priorityScore = Math.round(getCounterRankingV2AdminReviewPriorityScore(row));
   const isPublicCountersTab = reviewTab === "public_counters";
+  const suggestionExplanation = getCounterRankingV2RowSuggestionExplanation(row);
+  const rowWarnings = getCounterRankingV2RowWarnings(row);
+  const isManualOverridePublicRow = isCounterRankingV2ManualOverridePublicRow(row);
 
   function saveWithStatus(reviewStatus: CounterRankingV2ReviewStatus) {
     const nextForm = {
@@ -4686,6 +5224,11 @@ function CounterRankingV2AdminReviewCard({
           {isCounterRankingV2ReviewPublicEligible(row.review) ? (
             <Badge className="border-emerald-300/20 bg-emerald-500/10 text-emerald-100">Public eligible</Badge>
           ) : null}
+          {isManualOverridePublicRow ? (
+            <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">
+              Manual override
+            </Badge>
+          ) : null}
           {row.review?.highMasteryRequired ? (
             <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">
               High Mastery
@@ -4699,12 +5242,25 @@ function CounterRankingV2AdminReviewCard({
 
       <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
         <CounterRankingV2Metric label="Mechanical score" value={String(row.mechanicalResult.score)} />
-        <CounterRankingV2Metric label="Final reviewed" value={formatNullableNumber(row.review?.finalMechanicalScore)} />
+        <CounterRankingV2Metric label="Manual review score" value={formatNullableNumber(row.review?.finalMechanicalScore)} />
         <CounterRankingV2Metric label="Observed rank" value={row.observed?.rank ? `#${row.observed.rank}` : "None"} />
         <CounterRankingV2Metric label="Games" value={formatNullableNumber(row.observed?.games)} />
-        <CounterRankingV2Metric label="Confidence" value={row.observed?.confidence.shortLabel ?? "No data"} />
-        <CounterRankingV2Metric label="Mismatch" value={row.rankDelta === null ? "None" : formatRankDelta(row.rankDelta)} />
-        <CounterRankingV2Metric label="Priority" value={String(priorityScore)} />
+        <CounterRankingV2Metric label="Observed confidence" value={row.observed?.confidence.shortLabel ?? "No data"} />
+        <CounterRankingV2Metric label="Observed mismatch" value={row.rankDelta === null ? "None" : formatRankDelta(row.rankDelta)} />
+        <CounterRankingV2Metric label="Review priority" value={String(priorityScore)} />
+      </div>
+
+      <div className="mt-3 rounded-md border border-white/10 bg-black/15 p-3">
+        <p className="text-sm text-zinc-300">{suggestionExplanation}</p>
+        {rowWarnings.length > 0 ? (
+          <ul className="mt-2 space-y-1">
+            {rowWarnings.map((warning) => (
+              <li className="text-xs text-amber-100" key={warning}>
+                Warning: {warning}
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
 
       {reasons.length > 0 || mechanicalReasons.length > 0 ? (
@@ -5364,6 +5920,10 @@ function CounterRankingV2AutomationBlockerSummaryPanel({
       value: summary.score_below_auto_approval_threshold,
     },
     { label: "High mastery candidate", value: summary.high_mastery_candidate },
+    {
+      label: "Insufficient direct counter signal",
+      value: summary.insufficient_direct_counter_signal,
+    },
     { label: "Observed-stat contradiction", value: summary.observed_stat_contradiction },
     { label: "Weak one-factor signal", value: summary.weak_one_factor_signal },
     {
@@ -5652,14 +6212,14 @@ function CounterRankingV2PublicPreviewPanel({
                     }
                   />
                   <CounterRankingV2Metric
-                    label="Final reviewed score"
+                    label="Manual review score"
                     value={String(previewRow.finalReviewedScore)}
                   />
                   <CounterRankingV2Metric
                     label="Observed games"
                     value={formatNullableNumber(previewRow.observedGames)}
                   />
-                  <CounterRankingV2Metric label="Confidence" value={previewRow.confidenceLabel} />
+                  <CounterRankingV2Metric label="Observed confidence" value={previewRow.confidenceLabel} />
                 </div>
               </li>
             );
@@ -5755,6 +6315,9 @@ function CounterRankingV2ShadowRow({
     automationSuggestion.blockers.length > 0
       ? automationSuggestion.blockers.map((blocker) => blocker.message)
       : (automationSuggestion?.reasons ?? []);
+  const suggestionExplanation = getCounterRankingV2RowSuggestionExplanation(row);
+  const rowWarnings = getCounterRankingV2RowWarnings(row);
+  const isManualOverridePublicRow = isCounterRankingV2ManualOverridePublicRow(row);
 
   return (
     <div
@@ -5836,11 +6399,11 @@ function CounterRankingV2ShadowRow({
           />
           <CounterRankingV2Metric label="Games" value={formatNullableNumber(row.observed?.games)} />
           <CounterRankingV2Metric
-            label="Confidence"
+            label="Observed confidence"
             value={row.observed?.confidence.shortLabel ?? "No data"}
           />
           <CounterRankingV2Metric
-            label="Mechanical"
+            label="Mechanical rank / score"
             value={
               result.status === "calculated"
                 ? `#${row.mechanicalRank} / ${result.score}`
@@ -5860,7 +6423,7 @@ function CounterRankingV2ShadowRow({
             value={formatSignedAdjustment(previewAdjustment)}
           />
           <CounterRankingV2Metric
-            label="Final reviewed"
+            label="Manual review score"
             value={hasCalculatedScore ? String(finalScorePreview) : "Missing"}
           />
         </div>
@@ -5908,6 +6471,11 @@ function CounterRankingV2ShadowRow({
               Internal review only
             </Badge>
           )}
+          {isManualOverridePublicRow ? (
+            <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">
+              Manual override
+            </Badge>
+          ) : null}
           {row.review?.highMasteryRequired ? (
             <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">
               High Mastery
@@ -5935,6 +6503,18 @@ function CounterRankingV2ShadowRow({
 
       {isExpanded ? (
         <div className="border-t border-white/10 p-4" id={panelId}>
+          <div className="mb-4 rounded-md border border-white/10 bg-black/15 p-3">
+            <p className="text-sm text-zinc-300">{suggestionExplanation}</p>
+            {rowWarnings.length > 0 ? (
+              <ul className="mt-2 space-y-1">
+                {rowWarnings.map((warning) => (
+                  <li className="text-xs text-amber-100" key={warning}>
+                    Warning: {warning}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
           <div className="grid gap-3 md:grid-cols-3">
             <CounterRankingV2Metric
               label="Calculated mechanical score"
@@ -5945,7 +6525,7 @@ function CounterRankingV2ShadowRow({
               value={formatSignedAdjustment(previewAdjustment)}
             />
             <CounterRankingV2Metric
-              label="Final reviewed score"
+              label="Manual review score"
               value={hasCalculatedScore ? String(finalScorePreview) : "Missing"}
             />
           </div>
@@ -7333,6 +7913,65 @@ function getCounterRankingV2AdminBatchApprovalStatus(
     (row.mechanicalResult.status === "calculated" ? row.mechanicalResult.score : 0);
 
   return mechanicalScore >= 80 ? "verified_strong_counter" : "verified_soft_counter";
+}
+
+function getCounterRankingV2RowSuggestionExplanation(row: CounterRankingV2ComparisonRow) {
+  const mechanicalReasons = getCounterRankingV2MechanicalReasons(row.mechanicalResult.factors, 3);
+
+  if (mechanicalReasons.length === 0 || row.mechanicalResult.score < 45) {
+    return "No clear counter pattern is strong enough yet; treat this as needs expert review.";
+  }
+
+  return `Suggested because ${mechanicalReasons
+    .map((reason) => reason.title.toLowerCase())
+    .join(", ")}.`;
+}
+
+function getCounterRankingV2RowWarnings(row: CounterRankingV2ComparisonRow) {
+  const warnings: string[] = [];
+  const observedGames = row.observed?.games ?? 0;
+  const automationBlockers = row.automationSuggestion?.blockers ?? [];
+
+  if (observedGames > 0 && observedGames < publicCounterPickMinimumRankedGames) {
+    warnings.push("low sample");
+  }
+
+  if (observedGames === 0) {
+    warnings.push("no observed data");
+  }
+
+  if (row.review?.highMasteryRequired) {
+    warnings.push("high mastery required");
+  }
+
+  if (row.mechanicalResult.score < 65) {
+    warnings.push("mechanical score is low");
+  }
+
+  if (automationBlockers.length > 0) {
+    warnings.push("automation blocker present");
+  }
+
+  if (isCounterRankingV2ManualOverridePublicRow(row)) {
+    warnings.push("manual override public recommendation");
+  }
+
+  return warnings;
+}
+
+function isCounterRankingV2ManualOverridePublicRow(row: CounterRankingV2ComparisonRow) {
+  return (
+    isCounterRankingV2ReviewPublicEligible(row.review) &&
+    (row.mechanicalResult.score < 65 ||
+      (row.automationSuggestion?.blockers.length ?? 0) > 0 ||
+      !hasCounterRankingV2VisibleDirectCounterSignal(row))
+  );
+}
+
+function hasCounterRankingV2VisibleDirectCounterSignal(row: CounterRankingV2ComparisonRow) {
+  return getCounterRankingV2MechanicalReasons(row.mechanicalResult.factors, 3).some(
+    (reason) => reason.impactLevel === "medium" || reason.impactLevel === "high",
+  );
 }
 
 function isCounterRankingV2SafeAutoPublicApprovalRow(row: CounterRankingV2ComparisonRow) {
