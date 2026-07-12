@@ -3269,8 +3269,8 @@ assert.match(
 );
 assert.match(
   counterPickAdminSectionSource,
-  /Auto-approval batch review/,
-  "The admin Shadow Ranking panel should expose batch controls for auto-approval candidates.",
+  /Batch review actions/,
+  "The admin Counter Suggestions panel should expose contextual batch controls for selected candidates.",
 );
 assert.match(
   counterPickAdminSectionSource,

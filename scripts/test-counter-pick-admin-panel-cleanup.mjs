@@ -194,25 +194,19 @@ function testCounterRankingV2ShadowProfileSelection() {
 
 function testCounterRankingV2ShadowCandidateAccordion() {
   assert.equal(counterPickSectionSource.includes("function CounterRankingV2ShadowRows"), true);
+  assert.equal(counterPickSectionSource.includes("function CounterRankingV2ShadowCandidateRow"), true);
   assert.equal(
-    counterPickSectionSource.includes("const [expandedCandidateId, setExpandedCandidateId] = useState"),
+    counterPickSectionSource.includes("<CounterRankingV2ShadowCandidateRow"),
     true,
   );
-  assert.equal(
-    counterPickSectionSource.includes("() => rows[0]?.candidateChampionId ?? null"),
-    true,
-  );
-  assert.equal(
-    counterPickSectionSource.includes("isExpanded={expandedCandidateId === row.candidateChampionId}"),
-    true,
-  );
-  assert.match(
-    counterPickSectionSource,
-    /setExpandedCandidateId\(\(currentCandidateId\) =>[\s\S]*currentCandidateId === row\.candidateChampionId \? null : row\.candidateChampionId/,
-    "Candidate rows should be controlled so only one row expands at a time.",
-  );
-  assert.equal(counterPickSectionSource.includes("aria-expanded={isExpanded}"), true);
-  assert.equal(counterPickSectionSource.includes("aria-controls={panelId}"), true);
+  assert.equal(counterPickSectionSource.includes("isExpanded={expandedCandidateId"), false);
+  assert.equal(counterPickSectionSource.includes("Counter suggestion review"), true);
+  assert.equal(counterPickSectionSource.includes("Review/Edit"), true);
+  assert.equal(counterPickSectionSource.includes("setIsDrawerOpen"), true);
+  assert.equal(counterPickSectionSource.includes("Target champion"), true);
+  assert.equal(counterPickSectionSource.includes("Candidate champion"), true);
+  assert.equal(counterPickSectionSource.includes("Suggestion classification"), true);
+  assert.equal(counterPickSectionSource.includes("Relevant mechanical tags/signals"), true);
   assert.equal(counterPickSectionSource.includes("<ChevronDown"), true);
   assert.equal(counterPickSectionSource.includes("<ChevronRight"), true);
   assert.equal(counterPickSectionSource.includes('label="Manual review score"'), true);
@@ -243,6 +237,28 @@ function testCounterRankingV2ShadowReviewFilters() {
   assert.equal(counterPickSectionSource.includes('label: "Low sample"'), true);
   assert.equal(counterPickSectionSource.includes("filterCounterRankingV2RowsByReviewFilter"), true);
   assert.equal(counterPickSectionSource.includes("const [reviewFilter, setReviewFilter]"), true);
+  assert.equal(counterPickSectionSource.includes("CounterRankingV2ShadowCandidateTab"), true);
+  assert.equal(counterPickSectionSource.includes("counterRankingV2ShadowCandidateTabs"), true);
+  assert.equal(counterPickSectionSource.includes('tab: "best_suggestions"'), true);
+  assert.equal(counterPickSectionSource.includes('tab: "auto_approval_candidates"'), true);
+  assert.equal(counterPickSectionSource.includes('tab: "blocked"'), true);
+  assert.equal(counterPickSectionSource.includes("Candidate search"), true);
+  assert.equal(counterPickSectionSource.includes("Advanced status"), true);
+  assert.equal(
+    counterPickSectionSource.includes(
+      'const [candidateTab, setCandidateTab] =\n    useState<CounterRankingV2ShadowCandidateTab>("best_suggestions")',
+    ),
+    true,
+  );
+  assert.equal(
+    counterPickSectionSource.includes(
+      'const [densityMode, setDensityMode] = useState<CounterRankingV2AdminReviewDensity>("compact")',
+    ),
+    true,
+  );
+  assert.equal(counterPickSectionSource.includes("CounterRankingV2ShadowCollapsibleSection"), true);
+  assert.equal(counterPickSectionSource.includes("Automation blockers"), true);
+  assert.equal(counterPickSectionSource.includes("Debug details"), true);
   assert.equal(counterPickSectionSource.includes("filteredRows.length} of {rows.length} counter candidates"), true);
   assert.equal(counterPickSectionSource.includes("aria-pressed={isActiveFilter}"), true);
   assert.equal(counterPickSectionSource.includes('text="No mechanical candidates match this filter."'), true);
@@ -354,7 +370,13 @@ function testCounterRankingV2DirectionCopy() {
     true,
   );
   assert.equal(counterPickSectionSource.includes("Review target"), true);
-  assert.equal(counterPickSectionSource.includes("Mechanical counters against"), true);
+  assert.equal(counterPickSectionSource.includes("Counter Suggestions"), true);
+  assert.equal(
+    counterPickSectionSource.includes(
+      "Inspect mechanical counter candidates, automation blockers, observed data, and review",
+    ),
+    true,
+  );
   assert.equal(counterPickSectionSource.includes("Mechanical candidates into"), true);
   assert.equal(counterPickSectionSource.includes("into {targetLabel}"), true);
   assert.equal(counterPickSectionSource.includes("Selected target and role"), true);

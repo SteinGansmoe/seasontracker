@@ -169,6 +169,21 @@ type CounterRankingV2ShadowReviewFilterOption = {
   filter: CounterRankingV2ReviewFilter;
   label: string;
 };
+type CounterRankingV2ShadowCandidateTab =
+  | "all_candidates"
+  | "auto_approval_candidates"
+  | "auto_suggested"
+  | "best_suggestions"
+  | "blocked"
+  | "manual_reviewed"
+  | "needs_review"
+  | "public_eligible";
+type CounterRankingV2ShadowCandidateSort =
+  | "candidate_champion"
+  | "mechanical_rank"
+  | "mechanical_score"
+  | "observed_games"
+  | "review_priority";
 type CounterRankingV2AdminReviewSort =
   | "candidate_champion"
   | "champion_name"
@@ -244,6 +259,29 @@ const counterRankingV2ShadowReviewFilterOptions = [
   { filter: "public_eligible", label: "Public eligible" },
   { filter: "low_sample", label: "Low sample" },
 ] as const satisfies readonly CounterRankingV2ShadowReviewFilterOption[];
+const counterRankingV2ShadowCandidateTabs = [
+  { label: "Best suggestions", tab: "best_suggestions" },
+  { label: "Auto approval candidates", tab: "auto_approval_candidates" },
+  { label: "Auto suggested", tab: "auto_suggested" },
+  { label: "Needs review", tab: "needs_review" },
+  { label: "Manual reviewed", tab: "manual_reviewed" },
+  { label: "Blocked", tab: "blocked" },
+  { label: "Public eligible", tab: "public_eligible" },
+  { label: "All candidates", tab: "all_candidates" },
+] as const satisfies ReadonlyArray<{
+  label: string;
+  tab: CounterRankingV2ShadowCandidateTab;
+}>;
+const counterRankingV2ShadowCandidateSortOptions = [
+  { label: "Review priority", sort: "review_priority" },
+  { label: "Mechanical rank", sort: "mechanical_rank" },
+  { label: "Mechanical score", sort: "mechanical_score" },
+  { label: "Observed games", sort: "observed_games" },
+  { label: "Candidate champion", sort: "candidate_champion" },
+] as const satisfies ReadonlyArray<{
+  label: string;
+  sort: CounterRankingV2ShadowCandidateSort;
+}>;
 const counterRankingV2AdminReviewSortOptions = [
   { sort: "review_priority", label: "Review priority" },
   { sort: "highest_mechanical_score", label: "Highest mechanical score" },
@@ -5463,6 +5501,16 @@ function CounterRankingV2ShadowPanel({
   selectedRole: LeagueRole;
   statusError: string | null;
 }) {
+  const [candidateQuery, setCandidateQuery] = useState("");
+  const [candidateSort, setCandidateSort] =
+    useState<CounterRankingV2ShadowCandidateSort>("review_priority");
+  const [candidateTab, setCandidateTab] =
+    useState<CounterRankingV2ShadowCandidateTab>("best_suggestions");
+  const [densityMode, setDensityMode] = useState<CounterRankingV2AdminReviewDensity>("compact");
+  const [isAutomationBlockersOpen, setIsAutomationBlockersOpen] = useState(false);
+  const [isDebugDetailsOpen, setIsDebugDetailsOpen] = useState(false);
+  const [isOverviewOpen, setIsOverviewOpen] = useState(false);
+  const [isPublicPreviewOpen, setIsPublicPreviewOpen] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<CounterRankingV2ReviewFilter>("all");
   const [batchPublicEligible, setBatchPublicEligible] = useState(false);
   const [selectedAutoApprovalCandidateIds, setSelectedAutoApprovalCandidateIds] = useState<
@@ -5504,14 +5552,32 @@ function CounterRankingV2ShadowPanel({
       }),
     [rows],
   );
-  const filteredRows = useMemo(
+  const reviewFilteredRows = useMemo(
     () =>
-      filterCounterRankingV2RowsByReviewFilter({
+      reviewFilter === "all"
+        ? rows
+        : filterCounterRankingV2RowsByReviewFilter({
         filter: reviewFilter,
         minimumGames: publicCounterPickMinimumRankedGames,
         rows,
       }),
     [reviewFilter, rows],
+  );
+  const filteredRows = useMemo(
+    () =>
+      sortCounterRankingV2ShadowCandidateRows(
+        reviewFilteredRows.filter((row) =>
+          isCounterRankingV2ShadowCandidateRowVisible({
+            candidate: championsById.get(row.candidateChampionId) ?? null,
+            candidateQuery,
+            row,
+            tab: candidateTab,
+          }),
+        ),
+        candidateSort,
+        championsById,
+      ),
+    [candidateQuery, candidateSort, candidateTab, championsById, reviewFilteredRows],
   );
   const candidatePoolSummary = useMemo(
     () =>
@@ -5524,8 +5590,11 @@ function CounterRankingV2ShadowPanel({
     [championsById, filteredRows.length, rows.length, selectedRole],
   );
   const activeFilterLabel =
+    counterRankingV2ShadowCandidateTabs.find((option) => option.tab === candidateTab)?.label ??
+    "Best suggestions";
+  const activeReviewFilterLabel =
     counterRankingV2ShadowReviewFilterOptions.find((option) => option.filter === reviewFilter)
-      ?.label ?? "All";
+      ?.label ?? "All statuses";
   const autoApprovalCandidateRows = useMemo(
     () =>
       rows.filter(
@@ -5541,6 +5610,28 @@ function CounterRankingV2ShadowPanel({
     [autoApprovalCandidateRows, selectedAutoApprovalCandidateIds],
   );
   const isBatchSaving = savingReviewKey === "batch";
+  const publicPreviewCount = publicPreviewRows.length;
+  const reviewedCount = reviewProgressSummary.reviewed;
+  const unreviewedCount = reviewProgressSummary.unreviewed;
+  const targetSummaryText = `${reviewTargetLabel} - ${rows.length} candidates - ${reviewedCount} reviewed - ${unreviewedCount} unreviewed - ${automationSummary.autoSuggested} auto suggested - ${automationSummary.autoApprovalCandidates} auto approval - ${reviewProgressSummary.publicEligible} public`;
+  const observedDataStatus = !hasEnemyProfile
+    ? "Not loaded"
+    : isLoading
+      ? "Loading"
+      : statusError
+        ? "Unavailable"
+        : hasObservedStats
+          ? "Loaded from current stats"
+          : "No observed stats";
+  const reviewLayerStatus = !hasEnemyProfile
+    ? "Not loaded"
+    : reviewStatus.isLoading
+      ? "Loading"
+      : reviewStatus.error
+        ? "Unavailable"
+        : hasReviewRows
+          ? "Loaded from review table"
+          : "No review rows yet";
 
   async function handleBatchReviewAction(action: BatchCounterRankingV2MechanicalReviewAction) {
     const safePublicEligible =
@@ -5561,12 +5652,10 @@ function CounterRankingV2ShadowPanel({
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <CardTitle className="font-mono text-xl">
-              Mechanical counters against {reviewTargetLabel}
-            </CardTitle>
+            <CardTitle className="font-mono text-xl">Counter Suggestions</CardTitle>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
-              Internal-only comparison between current observed win-rate rank and deterministic
-              mechanical matchup fit. Every candidate below is evaluated into {reviewTargetLabel}.
+              Inspect mechanical counter candidates, automation blockers, observed data, and review
+              suggestions before public curation.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -5578,51 +5667,28 @@ function CounterRankingV2ShadowPanel({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid gap-3 md:grid-cols-5">
-          <CounterRankingV2MetaCell
-            label="Review target"
-            value={reviewTargetValue}
-          />
-          <CounterRankingV2MetaCell
-            label="Target profile"
-            value={
-              enemyProfile
-                ? `${formatProfileStatus(enemyProfile.reviewStatus)} v${enemyProfile.version}`
-                : "Missing"
-            }
-          />
-          <CounterRankingV2MetaCell
-            label="Observed data"
-            value={
-              !hasEnemyProfile
-                ? "Not loaded"
-                : isLoading
-                  ? "Loading"
-                  : statusError
-                    ? "Unavailable"
-                    : hasObservedStats
-                      ? "Loaded from current stats"
-                      : "No observed stats"
-            }
-          />
-          <CounterRankingV2MetaCell
-            label="Review layer"
-            value={
-              !hasEnemyProfile
-                ? "Not loaded"
-                : reviewStatus.isLoading
-                ? "Loading"
-                : reviewStatus.error
-                  ? "Unavailable"
-                  : hasReviewRows
-                    ? "Loaded from review table"
-                    : "No review rows yet"
-            }
-          />
-          <CounterRankingV2MetaCell
-            label="Public reviewed counters"
-            value={useReviewedMechanicalCountersPublicly ? "Feature flag enabled" : "Disabled"}
-          />
+        <div className="rounded-lg border border-cyan-300/20 bg-cyan-500/10 p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-cyan-100">Selected target</p>
+              <p className="mt-1 text-sm text-cyan-50">{targetSummaryText}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge className="border-white/10 bg-white/5 text-zinc-300">
+                Target profile:{" "}
+                {enemyProfile
+                  ? `${formatProfileStatus(enemyProfile.reviewStatus)} v${enemyProfile.version}`
+                  : "Missing"}
+              </Badge>
+              <Badge className="border-sky-300/20 bg-sky-500/10 text-sky-100">
+                Observed data: {observedDataStatus}
+              </Badge>
+              <Badge className="border-emerald-300/20 bg-emerald-500/10 text-emerald-100">
+                Public reviewed counters:{" "}
+                {useReviewedMechanicalCountersPublicly ? "Feature flag enabled" : "Disabled"}
+              </Badge>
+            </div>
+          </div>
         </div>
 
         {statusError ? (
@@ -5641,8 +5707,6 @@ function CounterRankingV2ShadowPanel({
           </p>
         ) : null}
 
-        <CounterRankingV2CandidatePoolSummaryPanel summary={candidatePoolSummary} />
-
         {!hasEnemyProfile ? (
           <EmptyState
             tone="warning"
@@ -5658,11 +5722,67 @@ function CounterRankingV2ShadowPanel({
             {!reviewStatus.isLoading && !reviewStatus.error && !hasReviewRows ? (
               <EmptyState text="No review rows have been saved for this target and role yet." />
             ) : null}
-            <CounterRankingV2ReviewProgressSummaryPanel summary={reviewProgressSummary} />
-            <CounterRankingV2AutomationSummaryPanel summary={automationSummary} />
-            <CounterRankingV2AutomationBlockerSummaryPanel
-              summary={automationBlockerSummary}
-            />
+
+            <CounterRankingV2ShadowCollapsibleSection
+              isOpen={isOverviewOpen}
+              onToggle={() => setIsOverviewOpen((isOpen) => !isOpen)}
+              summary={`${candidatePoolSummary.candidatesDisplayed} displayed of ${candidatePoolSummary.candidatesEvaluated} evaluated - ${reviewProgressSummary.reviewed} reviewed`}
+              title="Overview"
+            >
+              <div className="space-y-3">
+                <CounterRankingV2CandidatePoolSummaryPanel summary={candidatePoolSummary} />
+                <CounterRankingV2ReviewProgressSummaryPanel summary={reviewProgressSummary} />
+                <CounterRankingV2AutomationSummaryPanel summary={automationSummary} />
+              </div>
+            </CounterRankingV2ShadowCollapsibleSection>
+
+            <CounterRankingV2ShadowCollapsibleSection
+              isOpen={isAutomationBlockersOpen}
+              onToggle={() => setIsAutomationBlockersOpen((isOpen) => !isOpen)}
+              summary={formatCounterRankingV2AutomationBlockerCompactSummary(automationBlockerSummary)}
+              title="Automation blockers"
+            >
+              <CounterRankingV2AutomationBlockerSummaryPanel summary={automationBlockerSummary} />
+            </CounterRankingV2ShadowCollapsibleSection>
+
+            <CounterRankingV2ShadowCollapsibleSection
+              isOpen={isPublicPreviewOpen}
+              onToggle={() => setIsPublicPreviewOpen((isOpen) => !isOpen)}
+              summary={`${publicPreviewCount} approved counter${publicPreviewCount === 1 ? "" : "s"}`}
+              title="Public preview"
+            >
+              <CounterRankingV2PublicPreviewPanel
+                championsById={championsById}
+                previewRows={publicPreviewRows}
+                targetLabel={reviewTargetLabel}
+              />
+            </CounterRankingV2ShadowCollapsibleSection>
+
+            <CounterRankingV2ShadowCollapsibleSection
+              isOpen={isDebugDetailsOpen}
+              onToggle={() => setIsDebugDetailsOpen((isOpen) => !isOpen)}
+              summary={`Review layer: ${reviewLayerStatus} - advanced status filter: ${activeReviewFilterLabel}`}
+              title="Debug details"
+            >
+              <div className="grid gap-3 md:grid-cols-5">
+                <CounterRankingV2MetaCell label="Review target" value={reviewTargetValue} />
+                <CounterRankingV2MetaCell
+                  label="Target profile"
+                  value={
+                    enemyProfile
+                      ? `${formatProfileStatus(enemyProfile.reviewStatus)} v${enemyProfile.version}`
+                      : "Missing"
+                  }
+                />
+                <CounterRankingV2MetaCell label="Observed data" value={observedDataStatus} />
+                <CounterRankingV2MetaCell label="Review layer" value={reviewLayerStatus} />
+                <CounterRankingV2MetaCell
+                  label="Public reviewed counters"
+                  value={useReviewedMechanicalCountersPublicly ? "Feature flag enabled" : "Disabled"}
+                />
+              </div>
+            </CounterRankingV2ShadowCollapsibleSection>
+
             <CounterRankingV2BatchReviewPanel
               autoApprovalCandidateCount={autoApprovalCandidateRows.length}
               isBatchSaving={isBatchSaving}
@@ -5678,28 +5798,28 @@ function CounterRankingV2ShadowPanel({
               selectedCount={selectedAutoApprovalRows.length}
               selectedIds={selectedAutoApprovalCandidateIds}
             />
-            <CounterRankingV2PublicPreviewPanel
-              championsById={championsById}
-              previewRows={publicPreviewRows}
-              targetLabel={reviewTargetLabel}
-            />
-            <p className="text-sm font-semibold text-zinc-100">
-              Mechanical candidates into {reviewTargetLabel}
-            </p>
-            <div className="rounded-lg border border-white/10 bg-black/15 p-3">
+
+            <div className="sticky top-3 z-20 rounded-lg border border-white/10 bg-[#071321]/95 p-3 shadow-xl shadow-black/20 backdrop-blur">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-sm font-semibold text-zinc-100">Review filters</p>
+                <div>
+                  <p className="text-sm font-semibold text-zinc-100">
+                    Mechanical candidates into {reviewTargetLabel}
+                  </p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {activeFilterLabel}: {filteredRows.length} of {rows.length} counter candidates
+                  </p>
+                </div>
                 <p className="text-xs text-zinc-500">
-                  {activeFilterLabel}: {filteredRows.length} of {rows.length} counter candidates
+                  Status filter: {activeReviewFilterLabel}
                 </p>
               </div>
               <div
-                aria-label="Counter Ranking V2 review filters"
+                aria-label="Counter Suggestions filter tabs"
                 className="mt-3 flex flex-wrap gap-2"
                 role="group"
               >
-                {counterRankingV2ShadowReviewFilterOptions.map((option) => {
-                  const isActiveFilter = option.filter === reviewFilter;
+                {counterRankingV2ShadowCandidateTabs.map((option) => {
+                  const isActiveFilter = option.tab === candidateTab;
 
                   return (
                     <button
@@ -5710,14 +5830,69 @@ function CounterRankingV2ShadowPanel({
                           ? "border-cyan-300/30 bg-cyan-500/15 text-cyan-100"
                           : "border-white/10 bg-white/5 text-zinc-300 hover:border-cyan-300/20 hover:bg-white/10",
                       )}
-                      key={option.filter}
-                      onClick={() => setReviewFilter(option.filter)}
+                      key={option.tab}
+                      onClick={() => setCandidateTab(option.tab)}
                       type="button"
                     >
                       {option.label}
                     </button>
                   );
                 })}
+              </div>
+              <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_0.8fr_0.8fr_0.8fr]">
+                <label className="block space-y-2">
+                  <span className="text-sm text-zinc-300">Candidate search</span>
+                  <Input
+                    className="h-10 border-white/10 bg-white/5 text-zinc-100 placeholder:text-zinc-500"
+                    onChange={(event) => setCandidateQuery(event.target.value)}
+                    placeholder="Search candidate..."
+                    type="search"
+                    value={candidateQuery}
+                  />
+                </label>
+                <AdminReviewSelect
+                  label="Sort"
+                  onChange={(value) => setCandidateSort(value as CounterRankingV2ShadowCandidateSort)}
+                  value={candidateSort}
+                >
+                  {counterRankingV2ShadowCandidateSortOptions.map((option) => (
+                    <option className={selectOptionClassName} key={option.sort} value={option.sort}>
+                      {option.label}
+                    </option>
+                  ))}
+                </AdminReviewSelect>
+                <AdminReviewSelect
+                  label="Advanced status"
+                  onChange={(value) => setReviewFilter(value as CounterRankingV2ReviewFilter)}
+                  value={reviewFilter}
+                >
+                  {counterRankingV2ShadowReviewFilterOptions.map((option) => (
+                    <option className={selectOptionClassName} key={option.filter} value={option.filter}>
+                      {option.label}
+                    </option>
+                  ))}
+                </AdminReviewSelect>
+                <div className="space-y-2">
+                  <span className="text-sm text-zinc-300">Density</span>
+                  <div className="grid h-10 grid-cols-2 rounded-md border border-white/10 bg-white/[0.03] p-1">
+                    {(["compact", "comfortable"] as const).map((density) => (
+                      <button
+                        aria-pressed={densityMode === density}
+                        className={cn(
+                          "rounded px-2 text-xs font-semibold transition",
+                          densityMode === density
+                            ? "bg-cyan-500/20 text-cyan-100"
+                            : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100",
+                        )}
+                        key={density}
+                        onClick={() => setDensityMode(density)}
+                        type="button"
+                      >
+                        {density === "compact" ? "Compact" : "Comfortable"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -5744,9 +5919,11 @@ function CounterRankingV2ShadowPanel({
                 onSaveReview={onSaveReview}
                 profileOverridesByChampionId={profileOverridesByChampionId}
                 profileStatusesByChampionId={profileStatusesByChampionId}
+                densityMode={densityMode}
                 rows={filteredRows}
                 savingReviewKey={savingReviewKey}
                 selectedAutoApprovalCandidateIds={selectedAutoApprovalCandidateIds}
+                targetProfile={enemyProfile}
                 targetLabel={reviewTargetLabel}
               />
             )}
@@ -5759,6 +5936,7 @@ function CounterRankingV2ShadowPanel({
 
 function CounterRankingV2ShadowRows({
   championsById,
+  densityMode,
   isLoadingObserved,
   onAutoApprovalSelectionToggle,
   onSaveReview,
@@ -5767,9 +5945,11 @@ function CounterRankingV2ShadowRows({
   rows,
   savingReviewKey,
   selectedAutoApprovalCandidateIds,
+  targetProfile,
   targetLabel,
 }: {
   championsById: Map<string, AdminLeagueChampion>;
+  densityMode: CounterRankingV2AdminReviewDensity;
   isLoadingObserved: boolean;
   onAutoApprovalSelectionToggle: (candidateId: string) => void;
   onSaveReview: (row: CounterRankingV2ComparisonRow, form: CounterRankingV2ReviewForm) => void;
@@ -5778,18 +5958,15 @@ function CounterRankingV2ShadowRows({
   rows: CounterRankingV2ComparisonRow[];
   savingReviewKey: string | null;
   selectedAutoApprovalCandidateIds: Set<string>;
+  targetProfile: CounterRankingV2ChampionProfile | null;
   targetLabel: string;
 }) {
-  const [expandedCandidateId, setExpandedCandidateId] = useState<string | null>(
-    () => rows[0]?.candidateChampionId ?? null,
-  );
-
   return (
     <div className="space-y-3">
       {rows.map((row) => (
-        <CounterRankingV2ShadowRow
+        <CounterRankingV2ShadowCandidateRow
           candidate={championsById.get(row.candidateChampionId) ?? null}
-          isExpanded={expandedCandidateId === row.candidateChampionId}
+          densityMode={densityMode}
           isLoadingObserved={isLoadingObserved}
           isSelectedForAutoApproval={selectedAutoApprovalCandidateIds.has(row.candidateChampionId)}
           key={`${row.candidateChampionId}-${row.review?.updatedAt ?? "new"}`}
@@ -5797,15 +5974,11 @@ function CounterRankingV2ShadowRows({
             onAutoApprovalSelectionToggle(row.candidateChampionId)
           }
           onSaveReview={onSaveReview}
-          onToggle={() =>
-            setExpandedCandidateId((currentCandidateId) =>
-              currentCandidateId === row.candidateChampionId ? null : row.candidateChampionId,
-            )
-          }
           profileOverridesByChampionId={profileOverridesByChampionId}
           profileStatusesByChampionId={profileStatusesByChampionId}
           row={row}
           savingReviewKey={savingReviewKey}
+          targetProfile={targetProfile}
           targetLabel={targetLabel}
         />
       ))}
@@ -5826,6 +5999,41 @@ function CounterRankingV2MetaCell({
     <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3" title={title}>
       <p className="text-xs uppercase text-zinc-500">{label}</p>
       <p className="mt-1 text-sm font-semibold text-zinc-100">{value}</p>
+    </div>
+  );
+}
+
+function CounterRankingV2ShadowCollapsibleSection({
+  children,
+  isOpen,
+  onToggle,
+  summary,
+  title,
+}: {
+  children: ReactNode;
+  isOpen: boolean;
+  onToggle: () => void;
+  summary: string;
+  title: string;
+}) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-black/15 p-3">
+      <button
+        className="flex w-full flex-wrap items-center justify-between gap-3 text-left"
+        onClick={onToggle}
+        type="button"
+      >
+        <span className="inline-flex items-center gap-2 text-sm font-semibold text-zinc-100">
+          {isOpen ? (
+            <ChevronDown className="size-4 text-cyan-100" aria-hidden="true" />
+          ) : (
+            <ChevronRight className="size-4 text-cyan-100" aria-hidden="true" />
+          )}
+          {title}
+        </span>
+        <span className="text-xs text-zinc-500">{summary}</span>
+      </button>
+      {isOpen ? <div className="mt-3">{children}</div> : null}
     </div>
   );
 }
@@ -6058,12 +6266,17 @@ function CounterRankingV2BatchReviewPanel({
   const hasSelection = selectedCount > 0;
 
   return (
-    <div className="rounded-lg border border-white/10 bg-black/15 p-3">
+    <div
+      className={cn(
+        "rounded-lg border border-white/10 bg-black/15 p-3",
+        hasSelection ? "sticky top-28 z-10 shadow-xl shadow-black/20" : "",
+      )}
+    >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-zinc-100">Auto-approval batch review</p>
+          <p className="text-sm font-semibold text-zinc-100">Batch review actions</p>
           <p className="mt-1 text-xs text-zinc-500">
-            {selectedCount} selected of {autoApprovalCandidateCount} safe candidates
+            {selectedCount} selected of {autoApprovalCandidateCount} auto approval candidates
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -6077,20 +6290,23 @@ function CounterRankingV2BatchReviewPanel({
             <CheckSquare className="size-4" aria-hidden="true" />
             Select candidates
           </Button>
-          <Button
-            className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
-            disabled={selectedIds.size === 0 || isBatchSaving}
-            onClick={() => onSelectionChange(new Set())}
-            type="button"
-            variant="ghost"
-          >
-            <Square className="size-4" aria-hidden="true" />
-            Clear
-          </Button>
+          {hasSelection ? (
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              disabled={selectedIds.size === 0 || isBatchSaving}
+              onClick={() => onSelectionChange(new Set())}
+              type="button"
+              variant="ghost"
+            >
+              <Square className="size-4" aria-hidden="true" />
+              Clear selection
+            </Button>
+          ) : null}
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-3">
+      {hasSelection ? (
+        <div className="mt-3 flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-300">
           <input
             checked={publicEligible}
@@ -6131,7 +6347,8 @@ function CounterRankingV2BatchReviewPanel({
           <X className="size-4" aria-hidden="true" />
           Reject selected
         </Button>
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -6234,6 +6451,573 @@ function CounterRankingV2PublicPreviewPanel({
   );
 }
 
+function CounterRankingV2ShadowCandidateRow({
+  candidate,
+  densityMode,
+  isLoadingObserved,
+  isSelectedForAutoApproval,
+  onAutoApprovalSelectionToggle,
+  onSaveReview,
+  profileOverridesByChampionId,
+  profileStatusesByChampionId,
+  row,
+  savingReviewKey,
+  targetLabel,
+  targetProfile,
+}: {
+  candidate: AdminLeagueChampion | null;
+  densityMode: CounterRankingV2AdminReviewDensity;
+  isLoadingObserved: boolean;
+  isSelectedForAutoApproval: boolean;
+  onAutoApprovalSelectionToggle: () => void;
+  onSaveReview: (row: CounterRankingV2ComparisonRow, form: CounterRankingV2ReviewForm) => void;
+  profileOverridesByChampionId: CounterRankingV2ProfileByChampionId;
+  profileStatusesByChampionId: CounterRankingV2ProfileStatusByChampionId;
+  row: CounterRankingV2ComparisonRow;
+  savingReviewKey: string | null;
+  targetLabel: string;
+  targetProfile: CounterRankingV2ChampionProfile | null;
+}) {
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [reviewForm, setReviewForm] = useState<CounterRankingV2ReviewForm>(() =>
+    getCounterRankingV2ReviewForm(row.review),
+  );
+  const result = row.mechanicalResult;
+  const profile = getCounterRankingV2ChampionProfile(
+    row.candidateChampionId,
+    profileStatusesByChampionId,
+    profileOverridesByChampionId,
+    row.mechanicalResult.role ?? "mid",
+  );
+  const automationSuggestion = row.automationSuggestion;
+  const topReasons = getCounterRankingV2MechanicalReasons(result.factors);
+  const hasWeakMechanicalSignal = hasCounterRankingV2WeakMechanicalSignal(result.factors);
+  const parsedAdjustment = Number(reviewForm.manualAdjustment);
+  const previewAdjustment = clampCounterRankingV2ManualAdjustment(
+    Number.isFinite(parsedAdjustment) ? parsedAdjustment : 0,
+  );
+  const finalScorePreview = calculateCounterRankingV2FinalMechanicalScore({
+    calculatedMechanicalScore: result.score,
+    manualAdjustment: previewAdjustment,
+  });
+  const isSavingReview = savingReviewKey === row.candidateChampionId;
+  const hasCalculatedScore = result.status === "calculated";
+  const observedGames = row.observed?.games ?? 0;
+  const hasLowObservedSample =
+    observedGames > 0 && observedGames < publicCounterPickMinimumRankedGames;
+  const hasNoObservedData = !isLoadingObserved && observedGames === 0;
+  const isReviewStatusPublicEligible = isCounterRankingV2ReviewStatusPublicEligible(
+    reviewForm.reviewStatus,
+  );
+  const isPublicEligibleChecked = isReviewStatusPublicEligible && reviewForm.publicEligible;
+  const isSavedPublicEligible = isCounterRankingV2ReviewPublicEligible(row.review);
+  const isLowSampleMechanicalCounter = isSavedPublicEligible && hasLowObservedSample;
+  const isAutoApprovalCandidate =
+    automationSuggestion?.automationStatus === "auto_approval_candidate";
+  const isManualOverridePublicRow = isCounterRankingV2ManualOverridePublicRow(row);
+  const suggestionExplanation = getCounterRankingV2RowSuggestionExplanation(row);
+  const rowWarnings = getCounterRankingV2RowWarnings(row);
+  const automationExplanationTitle =
+    automationSuggestion?.automationStatus === "needs_review"
+      ? "Why this needs review"
+      : "Automation reasons";
+  const automationExplanations =
+    automationSuggestion?.automationStatus === "needs_review" &&
+    automationSuggestion.blockers.length > 0
+      ? automationSuggestion.blockers.map((blocker) => blocker.message)
+      : (automationSuggestion?.reasons ?? []);
+  const publicEligibilityHelperText =
+    reviewForm.reviewStatus === "unreviewed"
+      ? "Choose a reviewed status before enabling public eligibility."
+      : reviewForm.reviewStatus === "incorrect_suggestion" ||
+          reviewForm.reviewStatus === "not_a_counter"
+        ? `${formatCounterRankingV2ReviewStatus(reviewForm.reviewStatus)} rows cannot be public eligible.`
+        : isPublicEligibleChecked && hasLowObservedSample
+          ? "This will be treated as a low-sample mechanical counter."
+          : "Stored for shadow review. Public use requires the reviewed-counter feature flag.";
+  const rowPadding = densityMode === "compact" ? "p-2" : "p-3";
+  const metricTextClassName = densityMode === "compact" ? "text-xs" : "text-sm";
+  const reviewPriorityScore = Math.round(getCounterRankingV2ShadowCandidateReviewPriorityScore(row));
+
+  function saveReviewForm() {
+    onSaveReview(row, reviewForm);
+  }
+
+  return (
+    <div className={cn("rounded-lg border border-white/10 bg-white/[0.03]", rowPadding)}>
+      <div className="grid gap-3 xl:grid-cols-[minmax(18rem,1.5fr)_minmax(15rem,1fr)_minmax(18rem,1fr)_minmax(14rem,0.8fr)] xl:items-center">
+        <div className="flex min-w-0 items-center gap-3">
+          {isAutoApprovalCandidate ? (
+            <input
+              checked={isSelectedForAutoApproval}
+              className="size-4 accent-cyan-300"
+              onChange={onAutoApprovalSelectionToggle}
+              title="Select for batch review"
+              type="checkbox"
+            />
+          ) : (
+            <span className="size-4" />
+          )}
+          {candidate ? (
+            <Image
+              alt=""
+              className="size-10 rounded-md bg-white/10 object-cover"
+              height={40}
+              src={getChampionIconPath(candidate)}
+              width={40}
+            />
+          ) : (
+            <div className="size-10 rounded-md bg-white/10" />
+          )}
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-white">
+              {candidate?.name ?? row.candidateChampionId} into {targetLabel}
+            </p>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              {getRoleLabel(row.mechanicalResult.role ?? "mid")} -{" "}
+              {profile ? formatMechanicalProfileStatusLabel(profile) : "No profile"}
+            </p>
+            {densityMode === "comfortable" && profile ? (
+              <p className="mt-0.5 text-[0.7rem] text-zinc-600">
+                {formatMechanicalProfileRevisionLabel(profile)}
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-1.5">
+          <Badge className="border-white/10 bg-white/5 text-zinc-300">
+            {formatCounterRankingV2ReviewStatus(reviewForm.reviewStatus)}
+          </Badge>
+          {automationSuggestion ? (
+            <Badge className="border-sky-300/20 bg-sky-500/10 text-sky-100">
+              {formatCounterRankingV2AutomationStatus(automationSuggestion.automationStatus)}
+            </Badge>
+          ) : (
+            <Badge className="border-white/10 bg-white/5 text-zinc-400">No automation</Badge>
+          )}
+          {isSavedPublicEligible || isPublicEligibleChecked ? (
+            <Badge className="border-emerald-300/20 bg-emerald-500/10 text-emerald-100">
+              Public eligible
+            </Badge>
+          ) : null}
+          {reviewForm.highMasteryRequired || row.review?.highMasteryRequired ? (
+            <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">
+              High mastery
+            </Badge>
+          ) : null}
+          {hasLowObservedSample ? (
+            <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">
+              Low sample
+            </Badge>
+          ) : null}
+          {hasNoObservedData ? (
+            <Badge className="border-white/10 bg-white/5 text-zinc-400">No data</Badge>
+          ) : null}
+          {automationSuggestion?.blockers.length ? (
+            <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">
+              Blocked
+            </Badge>
+          ) : null}
+          {isManualOverridePublicRow ? (
+            <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">
+              Manual override
+            </Badge>
+          ) : null}
+          {hasWeakMechanicalSignal ? (
+            <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">
+              Low score
+            </Badge>
+          ) : null}
+        </div>
+
+        <div className="grid grid-cols-3 gap-2">
+          <div>
+            <p className="text-[11px] uppercase text-zinc-500">Mechanical</p>
+            <p className={cn("font-semibold text-zinc-100", metricTextClassName)}>
+              {row.mechanicalRank ? `#${row.mechanicalRank}` : "None"} /{" "}
+              {hasCalculatedScore ? result.score : "Missing"}
+            </p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase text-zinc-500">Manual</p>
+            <p className={cn("font-semibold text-zinc-100", metricTextClassName)}>
+              {hasCalculatedScore ? finalScorePreview : "Missing"}
+            </p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase text-zinc-500">Observed</p>
+            <p className={cn("font-semibold text-zinc-100", metricTextClassName)}>
+              {formatNullableNumber(observedGames)} games
+            </p>
+            {densityMode === "comfortable" ? (
+              <p className="text-[11px] text-zinc-500">
+                {row.observed?.confidence.shortLabel ?? "No data"}
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap justify-start gap-1.5 xl:justify-end">
+          {rowWarnings.length > 0 ? (
+            <Badge className="border-amber-300/20 bg-amber-500/10 text-amber-100">
+              Warning
+            </Badge>
+          ) : null}
+          <Button
+            className="h-8 border-cyan-300/20 bg-cyan-500/10 px-2 text-xs text-cyan-100 hover:bg-cyan-500/20"
+            onClick={() => setIsDrawerOpen(true)}
+            type="button"
+            variant="ghost"
+          >
+            <Pencil className="size-3.5" aria-hidden="true" />
+            Review/Edit
+          </Button>
+        </div>
+      </div>
+
+      {isDrawerOpen ? (
+        <div className="fixed inset-0 z-50 bg-black/70">
+          <div className="ml-auto flex h-full w-full max-w-4xl flex-col border-l border-white/10 bg-[#071321] shadow-2xl shadow-black/40">
+            <div className="flex items-start justify-between gap-4 border-b border-white/10 p-5">
+              <div>
+                <p className="text-xs font-semibold uppercase text-cyan-200">
+                  Counter suggestion review
+                </p>
+                <h3 className="mt-1 text-lg font-semibold text-white">
+                  {candidate?.name ?? row.candidateChampionId} into {targetLabel}
+                </h3>
+                <p className="mt-1 text-sm text-zinc-400">
+                  {getRoleLabel(row.mechanicalResult.role ?? "mid")} - full candidate details
+                </p>
+              </div>
+              <Button
+                className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                onClick={() => setIsDrawerOpen(false)}
+                type="button"
+                variant="ghost"
+              >
+                <X className="size-4" aria-hidden="true" />
+                Close
+              </Button>
+            </div>
+
+            <div className="flex-1 space-y-4 overflow-y-auto p-5">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                <CounterRankingV2Metric label="Target champion" value={targetLabel} />
+                <CounterRankingV2Metric
+                  label="Candidate champion"
+                  value={candidate?.name ?? row.candidateChampionId}
+                />
+                <CounterRankingV2Metric
+                  label="Target profile"
+                  value={
+                    targetProfile
+                      ? `${formatProfileStatus(targetProfile.reviewStatus)} v${targetProfile.version}`
+                      : "Missing"
+                  }
+                />
+                <CounterRankingV2Metric
+                  label="Candidate profile"
+                  value={profile ? `${formatProfileStatus(profile.reviewStatus)} v${profile.version}` : "Missing"}
+                />
+                <CounterRankingV2Metric
+                  label="Mechanical rank"
+                  value={row.mechanicalRank ? `#${row.mechanicalRank}` : "None"}
+                />
+                <CounterRankingV2Metric
+                  label="Mechanical score"
+                  value={hasCalculatedScore ? String(result.score) : "Missing"}
+                />
+                <CounterRankingV2Metric
+                  label="Manual review score"
+                  value={hasCalculatedScore ? String(finalScorePreview) : "Missing"}
+                />
+                <CounterRankingV2Metric
+                  label="Review priority"
+                  value={String(reviewPriorityScore)}
+                />
+                <CounterRankingV2Metric
+                  label="Observed rank"
+                  value={
+                    isLoadingObserved
+                      ? "Loading"
+                      : row.observed?.rank
+                        ? `#${row.observed.rank}`
+                        : "None"
+                  }
+                />
+                <CounterRankingV2Metric
+                  label="Observed games"
+                  value={formatNullableNumber(row.observed?.games)}
+                />
+                <CounterRankingV2Metric
+                  label="Observed confidence"
+                  value={row.observed?.confidence.shortLabel ?? "No data"}
+                />
+                <CounterRankingV2Metric
+                  label="Observed mismatch"
+                  value={formatRankDelta(row.rankDelta)}
+                />
+              </div>
+
+              <div className="rounded-md border border-white/10 bg-black/15 p-3">
+                <p className="text-sm text-zinc-300">{suggestionExplanation}</p>
+                {rowWarnings.length > 0 ? (
+                  <ul className="mt-2 space-y-1">
+                    {rowWarnings.map((warning, index) => (
+                      <li className="text-xs text-amber-100" key={`${warning}-${index}`}>
+                        Warning: {warning}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+
+              {automationSuggestion ? (
+                <div className="rounded-md border border-sky-300/15 bg-sky-500/[0.05] p-4">
+                  <p className="text-sm font-semibold text-sky-100">Suggestion classification</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Badge className="border-sky-300/20 bg-sky-500/10 text-sky-100">
+                      {formatCounterRankingV2AutomationStatus(automationSuggestion.automationStatus)}
+                    </Badge>
+                    <Badge className="border-white/10 bg-white/5 text-zinc-300">
+                      {formatCounterRankingV2SuggestedStrength(automationSuggestion.suggestedStrength)}
+                    </Badge>
+                    <Badge className="border-white/10 bg-white/5 text-zinc-300">
+                      {formatCounterRankingV2AutomationConfidence(automationSuggestion.confidence)} confidence
+                    </Badge>
+                  </div>
+                  <p className="mt-3 text-xs font-semibold uppercase text-zinc-500">
+                    {automationExplanationTitle}
+                  </p>
+                  <ul className="mt-2 space-y-2">
+                    {automationExplanations.map((reason) => (
+                      <li className="text-sm leading-6 text-zinc-400" key={reason}>
+                        {reason}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              <form
+                className="grid gap-4 rounded-md border border-white/10 bg-black/15 p-4 lg:grid-cols-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  saveReviewForm();
+                }}
+              >
+                <label className="block space-y-2">
+                  <span className="text-sm text-zinc-300">Review status</span>
+                  <select
+                    className={`${fieldClassName} h-10`}
+                    disabled={!hasCalculatedScore || isSavingReview}
+                    onChange={(event) =>
+                      setReviewForm((currentForm) => ({
+                        ...currentForm,
+                        publicEligible:
+                          event.target.value === "incorrect_suggestion" ||
+                          event.target.value === "not_a_counter" ||
+                          event.target.value === "unreviewed"
+                            ? false
+                            : currentForm.publicEligible,
+                        reviewStatus: event.target.value as CounterRankingV2ReviewStatus,
+                      }))
+                    }
+                    value={reviewForm.reviewStatus}
+                  >
+                    {counterRankingV2ReviewStatuses.map((status) => (
+                      <option className={selectOptionClassName} key={status} value={status}>
+                        {formatCounterRankingV2ReviewStatus(status)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block space-y-2">
+                  <span className="text-sm text-zinc-300">Adjustment reason</span>
+                  <select
+                    className={`${fieldClassName} h-10`}
+                    disabled={!hasCalculatedScore || isSavingReview}
+                    onChange={(event) =>
+                      setReviewForm((currentForm) => ({
+                        ...currentForm,
+                        adjustmentReason: event.target.value as CounterRankingV2AdjustmentReason,
+                      }))
+                    }
+                    value={reviewForm.adjustmentReason}
+                  >
+                    {counterRankingV2AdjustmentReasons.map((reason) => (
+                      <option className={selectOptionClassName} key={reason} value={reason}>
+                        {formatCounterRankingV2AdjustmentReason(reason)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block space-y-2">
+                  <span className="text-sm text-zinc-300">Manual adjustment</span>
+                  <Input
+                    className="h-10 border-white/10 bg-white/5 text-zinc-100"
+                    disabled={!hasCalculatedScore || isSavingReview}
+                    max={30}
+                    min={-30}
+                    onChange={(event) =>
+                      setReviewForm((currentForm) => ({
+                        ...currentForm,
+                        manualAdjustment: event.target.value,
+                      }))
+                    }
+                    step={1}
+                    type="number"
+                    value={reviewForm.manualAdjustment}
+                  />
+                </label>
+
+                <label className="flex items-center gap-3 rounded-md border border-white/10 bg-white/[0.03] p-3">
+                  <input
+                    checked={isPublicEligibleChecked}
+                    className="size-4 accent-cyan-300"
+                    disabled={!hasCalculatedScore || isSavingReview || !isReviewStatusPublicEligible}
+                    onChange={(event) =>
+                      setReviewForm((currentForm) => ({
+                        ...currentForm,
+                        publicEligible: event.target.checked,
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-zinc-100">Public eligible</span>
+                    <span className="block text-xs leading-5 text-zinc-500">
+                      {publicEligibilityHelperText}
+                    </span>
+                  </span>
+                </label>
+
+                <label className="flex items-center gap-3 rounded-md border border-amber-300/20 bg-amber-500/10 p-3">
+                  <input
+                    checked={reviewForm.highMasteryRequired}
+                    className="size-4 accent-amber-300"
+                    disabled={!hasCalculatedScore || isSavingReview}
+                    onChange={(event) =>
+                      setReviewForm((currentForm) => ({
+                        ...currentForm,
+                        highMasteryRequired: event.target.checked,
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-amber-100">
+                      High mastery required
+                    </span>
+                    <span className="block text-xs leading-5 text-amber-200/70">
+                      Modifier only. Public exposure still requires strong or soft counter approval.
+                    </span>
+                  </span>
+                </label>
+
+                {isPublicEligibleChecked && hasLowObservedSample ? (
+                  <p className="rounded-md border border-amber-300/20 bg-amber-500/10 p-3 text-sm text-amber-100 lg:col-span-2">
+                    This will be treated as a low-sample mechanical counter.
+                  </p>
+                ) : null}
+
+                <label className="block space-y-2 lg:col-span-2">
+                  <span className="text-sm text-zinc-300">Admin/internal note</span>
+                  <textarea
+                    className={`${fieldClassName} min-h-24 py-2 leading-6`}
+                    disabled={!hasCalculatedScore || isSavingReview}
+                    onChange={(event) =>
+                      setReviewForm((currentForm) => ({
+                        ...currentForm,
+                        adminReviewNote: event.target.value,
+                      }))
+                    }
+                    placeholder="Why this mechanical suggestion should be trusted, adjusted, or rejected..."
+                    value={reviewForm.adminReviewNote}
+                  />
+                </label>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 lg:col-span-2">
+                  <p className="text-xs leading-5 text-zinc-500">
+                    Raw calculated score stays model-owned. Saving only updates the review layer.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                      disabled={isSavingReview}
+                      onClick={() => setIsDrawerOpen(false)}
+                      type="button"
+                      variant="ghost"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      className="border-cyan-300/20 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/20"
+                      disabled={!hasCalculatedScore || isSavingReview}
+                      type="submit"
+                      variant="ghost"
+                    >
+                      <Save className="size-4" aria-hidden="true" />
+                      {isSavingReview ? "Saving..." : "Save review"}
+                    </Button>
+                  </div>
+                </div>
+              </form>
+
+              {topReasons.length > 0 ? (
+                <div>
+                  <p className="text-sm font-semibold text-zinc-100">Relevant mechanical tags/signals</p>
+                  <ul className="mt-3 space-y-2">
+                    {topReasons.map((reason) => (
+                      <li
+                        className="rounded-md border border-white/10 bg-black/15 p-3 text-sm leading-6 text-zinc-300"
+                        key={`${reason.factor.candidateStrength}-${reason.factor.enemyVulnerability}`}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="font-semibold text-zinc-100">{reason.title}</p>
+                            <p className="mt-1 text-xs leading-5 text-zinc-500">
+                              {reason.explanation}
+                            </p>
+                          </div>
+                          <Badge
+                            className={cn(
+                              "shrink-0",
+                              getCounterRankingV2ImpactBadgeClassName(reason.impactLevel),
+                            )}
+                          >
+                            {formatCounterRankingV2ImpactLevel(reason.impactLevel)}
+                          </Badge>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <p className="rounded-md border border-white/10 bg-black/15 p-3 text-sm text-zinc-500">
+                  No contributing mechanical factors are available for this candidate and selected
+                  target profile.
+                </p>
+              )}
+
+              {isLowSampleMechanicalCounter ? (
+                <p className="rounded-md border border-amber-300/20 bg-amber-500/10 p-3 text-sm text-amber-100">
+                  This saved public row is currently treated as a low-sample mechanical counter.
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function CounterRankingV2ShadowRow({
   candidate,
   isExpanded,
@@ -7825,6 +8609,107 @@ function getCounterRankingV2AdminReviewSummary(
       verifiedStrong: 0,
     },
   );
+}
+
+function isCounterRankingV2ShadowCandidateRowVisible({
+  candidate,
+  candidateQuery,
+  row,
+  tab,
+}: {
+  candidate: AdminLeagueChampion | null;
+  candidateQuery: string;
+  row: CounterRankingV2ComparisonRow;
+  tab: CounterRankingV2ShadowCandidateTab;
+}) {
+  const normalizedQuery = candidateQuery.trim().toLowerCase();
+
+  if (
+    normalizedQuery &&
+    !(candidate?.name.toLowerCase().includes(normalizedQuery) ||
+      row.candidateChampionId.toLowerCase().includes(normalizedQuery))
+  ) {
+    return false;
+  }
+
+  switch (tab) {
+    case "all_candidates":
+      return true;
+    case "auto_approval_candidates":
+      return row.automationSuggestion?.automationStatus === "auto_approval_candidate";
+    case "auto_suggested":
+      return row.automationSuggestion?.automationStatus === "auto_suggested";
+    case "best_suggestions":
+      return (
+        row.automationSuggestion?.automationStatus === "auto_approval_candidate" ||
+        row.automationSuggestion?.automationStatus === "auto_suggested" ||
+        row.review?.reviewStatus === "verified_strong_counter" ||
+        row.review?.reviewStatus === "verified_soft_counter"
+      );
+    case "blocked":
+      return (row.automationSuggestion?.blockers.length ?? 0) > 0;
+    case "manual_reviewed":
+      return row.review !== null && row.review.reviewStatus !== "unreviewed";
+    case "needs_review":
+      return (
+        row.automationSuggestion?.automationStatus === "needs_review" ||
+        row.review === null ||
+        row.review.reviewStatus === "unreviewed"
+      );
+    case "public_eligible":
+      return isCounterRankingV2ReviewPublicEligible(row.review);
+  }
+}
+
+function sortCounterRankingV2ShadowCandidateRows(
+  rows: CounterRankingV2ComparisonRow[],
+  sortMode: CounterRankingV2ShadowCandidateSort,
+  championsById: Map<string, AdminLeagueChampion>,
+) {
+  if (sortMode === "review_priority") {
+    return sortCounterRankingV2RowsByReviewPriority(rows);
+  }
+
+  return [...rows].sort((left, right) => {
+    switch (sortMode) {
+      case "candidate_champion":
+        return getCounterRankingV2ShadowCandidateName(left, championsById).localeCompare(
+          getCounterRankingV2ShadowCandidateName(right, championsById),
+        );
+      case "mechanical_rank":
+        return (
+          (left.mechanicalRank ?? Number.POSITIVE_INFINITY) -
+          (right.mechanicalRank ?? Number.POSITIVE_INFINITY)
+        );
+      case "mechanical_score":
+        return right.mechanicalResult.score - left.mechanicalResult.score;
+      case "observed_games":
+        return (right.observed?.games ?? 0) - (left.observed?.games ?? 0);
+    }
+  });
+}
+
+function getCounterRankingV2ShadowCandidateName(
+  row: CounterRankingV2ComparisonRow,
+  championsById: Map<string, AdminLeagueChampion>,
+) {
+  return championsById.get(row.candidateChampionId)?.name ?? row.candidateChampionId;
+}
+
+function getCounterRankingV2ShadowCandidateReviewPriorityScore(
+  row: CounterRankingV2ComparisonRow,
+) {
+  if (row.review) {
+    return row.review.finalMechanicalScore;
+  }
+
+  return row.mechanicalResult.status === "calculated" ? row.mechanicalResult.score : 0;
+}
+
+function formatCounterRankingV2AutomationBlockerCompactSummary(
+  summary: CounterRankingV2AutomationBlockerSummary,
+) {
+  return `Blockers: ${summary.score_below_auto_suggested_threshold} below auto-suggest threshold - ${summary.score_below_auto_approval_threshold} below auto-approval - ${summary.high_mastery_candidate} high mastery - ${summary.existing_manual_review_override} manual override`;
 }
 
 function getCounterRankingV2AdminReviewSectionCount(
